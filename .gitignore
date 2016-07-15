@@ -1,0 +1,7 @@
+#ignore emacs
+*~
+
+#ignore python cruft
+__pycache__
+*.pyc
+*.pyo
