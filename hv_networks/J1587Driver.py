@@ -15,7 +15,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 
-import J1708Driver
+from . import J1708Driver
 import struct
 import threading
 import select
