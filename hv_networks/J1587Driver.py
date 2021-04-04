@@ -269,20 +269,52 @@ class J1587SendSession(threading.Thread):
                     self.out_queue.put(data_frames[base+i].to_buffer())
             else:
                 pass#Either a RTS or RSD frame...why?
-            
+
         if eom_recvd:
             self.success.set()
 
     def give(self,msg):
         self.in_queue.put(msg)
 
-        
+
+class J1708DriverFactory:
+    def __init__(self):
+        self.set_ecm_ports()
+
+    def set_ports(self, ports):
+        self.ports = ports
+
+    def set_ecm_ports(self):
+        self.set_ports(J1708Driver.ECM)
+
+    def set_dpa_ports(self):
+        self.set_ports(J1708Driver.DPA)
+
+    def set_plc_ports(self):
+        self.set_ports(J1708Driver.DPA)
+
+    def make(self):
+        return J1708Driver.J1708Driver(self.ports)
+
+
+j1708_factory_singleton = J1708DriverFactory()
+
+
+def set_j1708_driver_factory(factory):
+    global j1708_factory_singleton
+    j1708_factory_singleton = factory
+
+
+def get_j1708_driver_factory():
+    return j1708_factory_singleton
+
+
 class J1708WorkerThread(threading.Thread):
     def __init__(self,read_queue):
         super(J1708WorkerThread,self).__init__()
         self.read_queue = read_queue
         self.stopped = threading.Event()
-        self.driver = J1708Driver.J1708Driver(J1708Driver.ECM)
+        self.driver = get_j1708_driver_factory().make()
 
     def run(self):
         while not self.stopped.is_set():
