@@ -448,7 +448,7 @@ if __name__ == '__main__':
 		434,435,436,437,438,443,500,509,507,508]
 
     for request in requests:
-        response = driver.request_pid(0x80,request)
+        response = driver.request_pid(0x80,request) #FIXME: sends incomplete requests for extended page PIDs should use PID 256 for that
         if response is not None:
             count += 1
         print("Response for pid %d: %s" % (request,repr(response)))
