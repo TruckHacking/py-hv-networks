@@ -49,8 +49,8 @@ class conn_mgmt_frame():
         self.src = src
         self.dst = dst
         self.conn_mgmt = conn_mgmt
-        
-        
+
+
 class RTS_FRAME(conn_mgmt_frame):
     def __init__(self,src,dst,segments,length):
         super().__init__(src,dst,RTS)
@@ -137,12 +137,12 @@ class conn_mode_transfer_frame():
         return bytes([self.src,DAT_PID,2+len(self.segment_data),self.dst,self.segment_id])+self.segment_data
 
 def parse_data_frame(buf):
-    
+
     src = buf[0]
     dst = buf[3]
     segment_id = buf[4]
     segment_data = buf[5:-1]
-    
+
     return conn_mode_transfer_frame(src,dst,segment_id,segment_data)
 
 def is_data_frame(buf):
@@ -358,7 +358,7 @@ class J1587WorkerThread(threading.Thread):
                     while not self.send_queue.empty():
                         msg = self.send_queue.get()
                         self.worker.send_message(msg)
-                    
+
 
 
 
@@ -434,7 +434,7 @@ class J1587Driver():
         msg: byte string of message, without MID.
         '''
         self.J1587Thread.transport_send(dst,msg)
-    
+
     def request_pid(self,mid,pid):
         '''Request PID from a specific MID.
         MID: MID of device from which we want the response.
@@ -468,7 +468,8 @@ class J1587Driver():
 
     def __del__(self):
         self.J1587Thread.join(timeout=1)
-        
+
+
 if __name__ == '__main__':
     driver = J1587Driver(0xac)
     count = 0
