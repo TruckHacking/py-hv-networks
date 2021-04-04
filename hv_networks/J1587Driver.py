@@ -14,8 +14,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-
-from . import J1708Driver
+from hv_networks import J1708Driver
 import struct
 import threading
 import select
