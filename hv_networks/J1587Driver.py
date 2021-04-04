@@ -365,9 +365,10 @@ class J1587WorkerThread(threading.Thread):
 
     def join(self,timeout=None):
         self.stopped.set()
-        self.worker.join()
+        if not self.worker.stopped:
+            self.worker.join()
         super(J1587WorkerThread,self).join(timeout=timeout)
-        
+
 
 class J1587Driver():
     '''
