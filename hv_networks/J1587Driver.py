@@ -213,6 +213,10 @@ class J1587ReceiveSession(threading.Thread):
     def give(self,msg):
         self.in_queue.put(msg)
 
+    def join(self, timeout=None):
+        super(J1587ReceiveSession, self).join(timeout=timeout)
+
+
 class J1587SendSession(threading.Thread):
     def __init__(self,src,dst,msg,out_queue,success):
         super(J1587SendSession,self).__init__(name="J1587SendSession")
@@ -274,6 +278,10 @@ class J1587SendSession(threading.Thread):
 
     def give(self,msg):
         self.in_queue.put(msg)
+
+    def join(self, timeout=None):
+        super(J1587SendSession,self).join(timeout=timeout)
+
 
 
 class J1708DriverFactory:
@@ -395,6 +403,8 @@ class J1587WorkerThread(threading.Thread):
             raise TimeoutException("J1587 send either aborted or timed out")
 
     def join(self,timeout=None):
+        #FIXME: the queue's threads keep running, not clear how to close them cleanly
+        #FIXME: the sessions's threads keep running, not clear how to close them cleanly
         self.worker.join()
         self.stopped.set()
         super(J1587WorkerThread,self).join(timeout=timeout)
