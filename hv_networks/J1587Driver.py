@@ -395,9 +395,8 @@ class J1587WorkerThread(threading.Thread):
             raise TimeoutException("J1587 send either aborted or timed out")
 
     def join(self,timeout=None):
+        self.worker.join()
         self.stopped.set()
-        if not self.worker.stopped:
-            self.worker.join()
         super(J1587WorkerThread,self).join(timeout=timeout)
 
 
