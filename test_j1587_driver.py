@@ -22,7 +22,7 @@ class FakeJ1708Driver:
             return None
         else:
             message = self.to_rx.pop()
-            if checksum:
+            if checksum:  # NB: J1587Drive will always call with checksums=true
                 return message
             else:
                 return message[:-1]
@@ -67,10 +67,29 @@ class J1587TestClass(unittest.TestCase):
         self.assertIsNone(driver.send_message(b'\x00'))
 
     def test_one_receive(self):
-        self.fake_j1708_factory.make().add_to_rx([b'\x00'])
+        self.fake_j1708_factory.make().add_to_rx([b'\x80\x00'])
         j1587_driver = J1587Driver(0xac)
-        rx = j1587_driver.read_message(block=True, timeout=0.5)
-        self.assertEqual(b'\x00', rx)
+        rx = j1587_driver.read_message(block=True, timeout=5.0)
+        self.assertEqual(b'\x80\x00', rx)
+        j1587_driver.cleanup()
+
+    def test_fragment_not_receive(self):
+        dummy = b'\x80\x00'
+        rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
+        self.fake_j1708_factory.make().add_to_rx([rts_to_ac])
+        self.fake_j1708_factory.make().add_to_rx([dummy])
+        j1587_driver = J1587Driver(0xac, suppress_fragments=True)
+        rx = j1587_driver.read_message(block=True)
+        self.assertEqual(dummy, rx)
+        j1587_driver.cleanup()
+
+    def test_fragment_receive(self):
+        rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
+        self.fake_j1708_factory.make().add_to_rx([rts_to_ac])
+        j1587_driver = J1587Driver(0xac, suppress_fragments=False)
+        rx = j1587_driver.read_message(block=True)
+        self.assertEqual(rts_to_ac, rx)
+        j1587_driver.cleanup()
 
 
 if __name__ == "__main__":
