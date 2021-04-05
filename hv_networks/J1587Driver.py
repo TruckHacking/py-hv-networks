@@ -149,25 +149,27 @@ def is_data_frame(buf):
     return len(buf) >= 6 and buf[1] == DAT_PID
 
 
-
 class J1587ReceiveSession(threading.Thread):
-    def __init__(self,rts_raw,out_queue,mailbox):
-        super(J1587ReceiveSession,self).__init__(name="J1587ReceiveSession")
+    def __init__(self, rts_raw, out_queue, mailbox, parent_stopped):
+        super(J1587ReceiveSession, self).__init__(name="J1587ReceiveSession")
         self.rts = parse_conn_frame(rts_raw)
         self.my_mid = self.rts.dst
         self.other_mid = self.rts.src
         self.in_queue = queue.Queue()
         self.out_queue = out_queue
         self.mailbox = mailbox
+        self.parent_stopped = parent_stopped
 
     def run(self):
         segments = self.rts.segments
         length = self.rts.length
         segment_buffer = [None] * segments
         cts = CTS_FRAME(self.my_mid,self.other_mid,segments,1)
+        if self.parent_stopped.is_set():
+            return
         self.out_queue.put(cts.to_buffer())
         start_time = time.time()
-        while None in segment_buffer and time.time() - start_time < 60:
+        while (not self.parent_stopped.is_set()) and None in segment_buffer and time.time() - start_time < 60:
             msg = None
             try:
                 msg = self.in_queue.get(block=True,timeout=2)
@@ -195,6 +197,9 @@ class J1587ReceiveSession(threading.Thread):
             else:
                 raise Exception("J1587 Session Thread shouldn't have received %s" % repr(msg))
 
+        if self.parent_stopped.is_set():
+            return
+
         if None in segment_buffer:
             abort = ABORT_FRAME(self.my_mid,self.other_mid)
             for i in range(3):
@@ -218,14 +223,15 @@ class J1587ReceiveSession(threading.Thread):
 
 
 class J1587SendSession(threading.Thread):
-    def __init__(self,src,dst,msg,out_queue,success):
-        super(J1587SendSession,self).__init__(name="J1587SendSession")
+    def __init__(self, src, dst, msg, out_queue, success, parent_stopped):
+        super(J1587SendSession, self).__init__(name="J1587SendSession")
         self.src = src
         self.dst = dst
         self.msg = msg
         self.out_queue = out_queue
         self.in_queue = queue.Queue()
         self.success = success
+        self.parent_stopped = parent_stopped
 
     def run(self):
         data_list = []
@@ -246,12 +252,14 @@ class J1587SendSession(threading.Thread):
 
         #send rts
         rts = RTS_FRAME(self.src,self.dst,len(data_frames),data_len)
+        if self.parent_stopped.is_set():
+            return
         self.out_queue.put(rts.to_buffer())
 
         #begin sending loop
         eom_recvd = False
         start_time = time.time()
-        while (not eom_recvd) and time.time() - start_time < 10:
+        while (not self.parent_stopped.is_set()) and (not eom_recvd) and time.time() - start_time < 10:
             try:
                 msg = self.in_queue.get(block=True,timeout=2)
             except queue.Empty:
@@ -382,7 +390,8 @@ class J1587WorkerThread(threading.Thread):
                 self.sessions[bytes([msg[0]])].give(msg)
             else:
                 if is_rts_frame(msg):
-                    session = J1587ReceiveSession(msg,self.send_queue,self.mailbox)
+                    parent_stopped = self.stopped
+                    session = J1587ReceiveSession(msg, self.send_queue, self.mailbox, parent_stopped)
                     self.sessions[bytes([msg[0]])] = session
                     session.start()
                 else:
@@ -396,8 +405,9 @@ class J1587WorkerThread(threading.Thread):
         self.send_queue.put(msg)
 
     def transport_send(self,dst,msg):
+        parent_stopped = self.stopped
         success = threading.Event()
-        send_session = J1587SendSession(self.my_mid,dst,msg,self.send_queue,success)
+        send_session = J1587SendSession(self.my_mid, dst, msg, self.send_queue, success, parent_stopped)
         self.sessions[bytes([dst])] = send_session
         send_session.start()
         send_session.join()
@@ -405,11 +415,14 @@ class J1587WorkerThread(threading.Thread):
             raise TimeoutException("J1587 send either aborted or timed out")
 
     def join(self,timeout=None):
-        #FIXME: the queue's threads keep running, not clear how to close them cleanly
-        #FIXME: the sessions's threads keep running, not clear how to close them cleanly
         self.worker.join()
         self.stopped.set()
+        # the queue's threads keep running, close them cleanly
+        self.send_queue.close()
+        self.mailbox.close()
         super(J1587WorkerThread,self).join(timeout=timeout)
+        # the sessions's threads keep running, close them cleanly
+        self.read_queue.close()
 
 
 class J1587Driver():
