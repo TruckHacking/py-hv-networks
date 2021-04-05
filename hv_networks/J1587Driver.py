@@ -367,6 +367,8 @@ class J1587WorkerThread(threading.Thread):
             qs = select.select([self.read_queue._reader,self.send_queue._reader],[],[],1)[0]
             if qs is []:
                 continue
+            if self.stopped.is_set():
+                return
             for q in qs:
                 if q is self.read_queue._reader:
                     while not self.read_queue.empty():
