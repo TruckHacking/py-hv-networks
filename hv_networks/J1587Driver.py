@@ -337,6 +337,7 @@ class J1708WorkerThread(threading.Thread):
         super(J1708WorkerThread,self).join(timeout=timeout)
 
     def send_message(self,msg,has_check=False):
+        # FIXME: called from thread where self.driver isn't necessarily published yet
         self.driver.send_message(msg,has_check)
 
 
@@ -351,9 +352,9 @@ class J1587WorkerThread(threading.Thread):
         self.sessions = {}
         self.worker = J1708WorkerThread(self.read_queue)
         self.stopped = threading.Event()
+        self.worker.start()
 
     def run(self):
-        self.worker.start()
         while not self.stopped.is_set():
             qs = select.select([self.read_queue._reader,self.send_queue._reader],[],[],1)[0]
             if qs is []:
