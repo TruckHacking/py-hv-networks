@@ -152,7 +152,7 @@ def is_data_frame(buf):
 
 class J1587ReceiveSession(threading.Thread):
     def __init__(self,rts_raw,out_queue,mailbox):
-        super(J1587ReceiveSession,self).__init__()
+        super(J1587ReceiveSession,self).__init__(name="J1587ReceiveSession")
         self.rts = parse_conn_frame(rts_raw)
         self.my_mid = self.rts.dst
         self.other_mid = self.rts.src
@@ -215,7 +215,7 @@ class J1587ReceiveSession(threading.Thread):
 
 class J1587SendSession(threading.Thread):
     def __init__(self,src,dst,msg,out_queue,success):
-        super(J1587SendSession,self).__init__()
+        super(J1587SendSession,self).__init__(name="J1587SendSession")
         self.src = src
         self.dst = dst
         self.msg = msg
@@ -310,7 +310,7 @@ def get_j1708_driver_factory():
 
 class J1708WorkerThread(threading.Thread):
     def __init__(self,read_queue):
-        super(J1708WorkerThread,self).__init__()
+        super(J1708WorkerThread,self).__init__(name="J1708WorkerThread")
         self.read_queue = read_queue
         self.stopped = threading.Event()
         self.driver = get_j1708_driver_factory().make()
@@ -334,7 +334,7 @@ class J1708WorkerThread(threading.Thread):
 
 class J1587WorkerThread(threading.Thread):
     def __init__(self,my_mid):
-        super(J1587WorkerThread,self).__init__()
+        super(J1587WorkerThread, self).__init__(name="J1587WorkerThread")
         self.my_mid = my_mid
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
