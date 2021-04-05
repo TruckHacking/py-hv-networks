@@ -223,7 +223,7 @@ class J1587ReceiveSession(threading.Thread):
 
 
 class J1587SendSession(threading.Thread):
-    def __init__(self, src, dst, msg, out_queue, success, parent_stopped):
+    def __init__(self, src, dst, msg, out_queue, success, parent_stopped, preempt_cts):
         super(J1587SendSession, self).__init__(name="J1587SendSession")
         self.src = src
         self.dst = dst
@@ -232,6 +232,7 @@ class J1587SendSession(threading.Thread):
         self.in_queue = queue.Queue()
         self.success = success
         self.parent_stopped = parent_stopped
+        self.preempt_cts = preempt_cts
 
     def run(self):
         data_list = []
@@ -240,7 +241,7 @@ class J1587SendSession(threading.Thread):
         msg = self.msg
         data_len = len(msg)
         while len(msg) > 0:
-            data_list += [msg[:15]]
+            data_list += [msg[:15]]  # FIXME: magic number 15 should be J1587_TRANSPORT_SEGMENT_SIZE
             msg = msg[15:]
 
         #package data into transfer frames
@@ -256,7 +257,13 @@ class J1587SendSession(threading.Thread):
             return
         self.out_queue.put(rts.to_buffer())
 
-        #begin sending loop
+        if self.preempt_cts:  # special handling when we want to ignore any target CTS frames: just send it all
+            for i in range(len(data_frames)):
+                self.out_queue.put(data_frames[i].to_buffer())
+            self.success.set()
+            return
+
+        #otherwise begin sending loop
         eom_recvd = False
         start_time = time.time()
         while (not self.parent_stopped.is_set()) and (not eom_recvd) and time.time() - start_time < 10:
@@ -350,10 +357,11 @@ class J1708WorkerThread(threading.Thread):
 
 
 class J1587WorkerThread(threading.Thread):
-    def __init__(self, my_mid, suppress_fragments):
+    def __init__(self, my_mid, suppress_fragments, preempt_cts):
         super(J1587WorkerThread, self).__init__(name="J1587WorkerThread")
         self.my_mid = my_mid
         self.suppress_fragments = suppress_fragments
+        self.preempt_cts = preempt_cts
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
         self.mailbox = multiprocessing.Queue()
@@ -368,7 +376,7 @@ class J1587WorkerThread(threading.Thread):
             if qs is []:
                 continue
             if self.stopped.is_set():
-                return
+                return  # FIXME: there is still a race where the *_queue.get() can error out.
             for q in qs:
                 if q is self.read_queue._reader:
                     while not self.read_queue.empty():
@@ -409,7 +417,8 @@ class J1587WorkerThread(threading.Thread):
     def transport_send(self,dst,msg):
         parent_stopped = self.stopped
         success = threading.Event()
-        send_session = J1587SendSession(self.my_mid, dst, msg, self.send_queue, success, parent_stopped)
+        send_session = J1587SendSession(self.my_mid, dst, msg, self.send_queue, success, parent_stopped,
+                                        self.preempt_cts)
         self.sessions[bytes([dst])] = send_session
         send_session.start()
         send_session.join()
@@ -431,9 +440,9 @@ class J1587Driver():
     '''
     Class for J1587 comms. Abstracts transport layer and PID requests.
     '''
-    def __init__(self, my_mid, suppress_fragments=True):
+    def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False):
         self.my_mid = my_mid
-        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments)
+        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments, preempt_cts)
         self.J1587Thread.start()
 
     def read_message(self,block=True,timeout=None):

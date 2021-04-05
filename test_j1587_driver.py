@@ -6,6 +6,7 @@ from hv_networks.J1708Driver import checksum
 from hv_networks.J1587Driver import J1587Driver
 from hv_networks.J1587Driver import J1708DriverFactory
 from hv_networks.J1587Driver import set_j1708_driver_factory
+from hv_networks.J1587Driver import TimeoutException
 
 
 # fake J1708Driver for testing
@@ -80,7 +81,7 @@ class J1587TestClass(unittest.TestCase):
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
         self.j1708_driver.add_to_rx([rts_to_ac])
         self.j1708_driver.add_to_rx([dummy])
-        self.j1587_driver = J1587Driver(0xac, suppress_fragments=True)
+        self.j1587_driver = J1587Driver(0xac)
         rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(dummy, rx)
 
@@ -90,6 +91,21 @@ class J1587TestClass(unittest.TestCase):
         self.j1587_driver = J1587Driver(0xac, suppress_fragments=False)
         rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(rts_to_ac, rx)
+
+    def test_send_cts_waiting(self):
+        self.assertTrue(self.j1708_driver.sent.empty())
+        self.j1587_driver = J1587Driver(0xac)
+        self.assertRaises(TimeoutException,
+                          self.j1587_driver.transport_send, 0x80, b'\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48'
+                          )  # times out because there's no responding node
+
+    def test_send_cts_preempt(self):
+        self.assertTrue(self.j1708_driver.sent.empty())
+        self.j1587_driver = J1587Driver(0xac, preempt_cts=True)
+        self.j1587_driver.transport_send(0x80, b'\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48')
+        self.assertEqual(b'\xac\xc5\x05\x80\x01\x01\x0c\x00', self.j1708_driver.sent.get(block=True, timeout=1.0))
+        self.assertEqual(b'\xac\xc6\x0e\x80\x01\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48', self.j1708_driver.sent.get(block=True, timeout=1.0))
+        self.assertTrue(self.j1708_driver.sent.empty())
 
 
 if __name__ == "__main__":
