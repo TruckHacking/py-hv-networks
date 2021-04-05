@@ -1,3 +1,4 @@
+import multiprocessing
 import unittest
 
 import struct
@@ -27,14 +28,11 @@ class FakeJ1708Driver:
             else:
                 return message[:-1]
 
-    sent = list()
+    sent = multiprocessing.Queue()
 
     def send_message(self, buf, has_check=False):
         msg = buf
-        if not has_check:
-            check = struct.pack('b', checksum(msg))
-            msg += check
-        self.sent.append(msg)
+        self.sent.put(msg)
 
     def close(self):
         return
@@ -58,38 +56,40 @@ class J1587TestClass(unittest.TestCase):
     def setUp(self):
         self.fake_j1708_factory = FakeJ1708Factory()
         set_j1708_driver_factory(self.fake_j1708_factory)
+        self.j1708_driver = self.fake_j1708_factory.make()
 
     def tearDown(self):
         self.fake_j1708_factory.clear()
+        self.j1587_driver.cleanup()
 
     def test_one_send(self):
-        driver = J1587Driver(0xac)
-        self.assertIsNone(driver.send_message(b'\x00'))
+        self.assertTrue(self.j1708_driver.sent.empty())
+        self.j1587_driver = J1587Driver(0xac)
+        self.j1587_driver.send_message(b'\xff\x00')
+        self.assertEqual(b'\xff\x00', self.j1708_driver.sent.get(block=True, timeout=1.0))
 
     def test_one_receive(self):
-        self.fake_j1708_factory.make().add_to_rx([b'\x80\x00'])
-        j1587_driver = J1587Driver(0xac)
-        rx = j1587_driver.read_message(block=True, timeout=5.0)
+        self.j1708_driver.add_to_rx([b'\x80\x00'])
+        self.j1587_driver = J1587Driver(0xac)
+        rx = self.j1587_driver.read_message(block=True, timeout=5.0)
+        # J1587Driver will receive broadcast, non-transport messages
         self.assertEqual(b'\x80\x00', rx)
-        j1587_driver.cleanup()
 
     def test_fragment_not_receive(self):
         dummy = b'\x80\x00'
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
-        self.fake_j1708_factory.make().add_to_rx([rts_to_ac])
-        self.fake_j1708_factory.make().add_to_rx([dummy])
-        j1587_driver = J1587Driver(0xac, suppress_fragments=True)
-        rx = j1587_driver.read_message(block=True)
+        self.j1708_driver.add_to_rx([rts_to_ac])
+        self.j1708_driver.add_to_rx([dummy])
+        self.j1587_driver = J1587Driver(0xac, suppress_fragments=True)
+        rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(dummy, rx)
-        j1587_driver.cleanup()
 
     def test_fragment_receive(self):
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
-        self.fake_j1708_factory.make().add_to_rx([rts_to_ac])
-        j1587_driver = J1587Driver(0xac, suppress_fragments=False)
-        rx = j1587_driver.read_message(block=True)
+        self.j1708_driver.add_to_rx([rts_to_ac])
+        self.j1587_driver = J1587Driver(0xac, suppress_fragments=False)
+        rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(rts_to_ac, rx)
-        j1587_driver.cleanup()
 
 
 if __name__ == "__main__":
