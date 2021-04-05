@@ -346,7 +346,7 @@ class J1587WorkerThread(threading.Thread):
         self.my_mid = my_mid
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
-        self.mailbox = queue.Queue()
+        self.mailbox = multiprocessing.Queue()
         self.sessions = {}
         self.worker = J1708WorkerThread(self.read_queue)
         self.stopped = threading.Event()
