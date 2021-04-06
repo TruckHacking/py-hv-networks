@@ -300,9 +300,9 @@ class J1587SendSession(threading.Thread):
         super(J1587SendSession,self).join(timeout=timeout)
 
 
-
 class J1708DriverFactory:
     def __init__(self):
+        self.ports = None
         self.set_ecm_ports()
 
     def set_ports(self, ports):
