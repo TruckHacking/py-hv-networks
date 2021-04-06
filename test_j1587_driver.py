@@ -71,12 +71,18 @@ class FakeJ1708Factory(J1708DriverFactory):
 
 
 class J1587TestClass(unittest.TestCase):
-    def setUp(self):
+    def setUp(self):  # ruddy naming b/c override from unittest.TestCase
+        self.set_up()
+
+    def tearDown(self):  # ruddy naming b/c override from unittest.TestCase
+        self.tear_down()
+
+    def set_up(self):
         self.fake_j1708_factory = FakeJ1708Factory()
         set_j1708_driver_factory(self.fake_j1708_factory)
         self.j1708_driver = self.fake_j1708_factory.make()
 
-    def tearDown(self):
+    def tear_down(self):
         self.j1587_driver.cleanup()
         self.fake_j1708_factory.clear()
 
