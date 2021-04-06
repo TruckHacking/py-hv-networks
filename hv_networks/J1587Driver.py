@@ -342,7 +342,9 @@ class J1708WorkerThread(threading.Thread):
         super(J1708WorkerThread,self).__init__(name="J1708WorkerThread")
         self.read_queue = read_queue
         self.stopped = threading.Event()
-        self.driver = get_j1708_driver_factory().make()
+        self.a_lock = threading.Lock()
+        with self.a_lock:
+            self.driver = get_j1708_driver_factory().make()
 
     def run(self):
         while not self.stopped.is_set():
@@ -358,8 +360,9 @@ class J1708WorkerThread(threading.Thread):
         super(J1708WorkerThread,self).join(timeout=timeout)
 
     def send_message(self,msg,has_check=False):
-        # FIXME: called from thread where self.driver isn't necessarily published yet
-        self.driver.send_message(msg,has_check)
+        # FIXME: not performant but lock needed b/c called from thread where self.driver isn't necessarily published yet
+        with self.a_lock:
+            self.driver.send_message(msg,has_check)
 
 
 class J1587WorkerThread(threading.Thread):
