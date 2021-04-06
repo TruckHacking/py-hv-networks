@@ -321,16 +321,20 @@ class J1708DriverFactory:
         return J1708Driver.J1708Driver(self.ports)
 
 
+factory_lock = threading.Lock()
 j1708_factory_singleton = J1708DriverFactory()
 
 
 def set_j1708_driver_factory(factory):
     global j1708_factory_singleton
-    j1708_factory_singleton = factory
+    with factory_lock:
+        j1708_factory_singleton = factory
 
 
 def get_j1708_driver_factory():
-    return j1708_factory_singleton
+    with factory_lock:
+        a = j1708_factory_singleton
+    return a
 
 
 class J1708WorkerThread(threading.Thread):
