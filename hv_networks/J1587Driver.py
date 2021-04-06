@@ -389,13 +389,24 @@ class J1587WorkerThread(threading.Thread):
             for q in qs:
                 if q is self.read_queue._reader:
                     while (not self.stopped.is_set()) and (not self.read_queue.empty()):
-                        msg = self.read_queue.get()
-                        self.handle_message(msg)
+                        try:
+                            msg = self.read_queue.get()
+                            self.handle_message(msg)
+                        except OSError:
+                            if self.stopped.is_set():
+                                return
+                            else:
+                                raise
                 else:
                     while (not self.stopped.is_set()) and (not self.send_queue.empty()):
-                        msg = self.send_queue.get()
-                        self.worker.send_message(msg)
-
+                        try:
+                            msg = self.send_queue.get()
+                            self.worker.send_message(msg)
+                        except OSError:
+                            if self.stopped.is_set():
+                                return
+                            else:
+                                raise
 
     def handle_message(self,msg):
         if len(msg) < 4 or msg[1] not in TRANSPORT_PIDS:

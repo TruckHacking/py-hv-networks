@@ -15,6 +15,7 @@ class FakeJ1708Driver:
     def __init__(self):
         self.to_rx = multiprocessing.Queue()
         self.sent = multiprocessing.Queue()
+        self.stopped = threading.Event()
         return
 
     def add_to_rx(self, more_rx):
@@ -22,6 +23,8 @@ class FakeJ1708Driver:
             self.to_rx.put(thing)
 
     def read_message(self, checksum=False, timeout=0.5):
+        if self.stopped.is_set():
+            return None
         if self.to_rx.empty():
             return None
         else:
@@ -32,10 +35,13 @@ class FakeJ1708Driver:
                 return message[:-1]
 
     def send_message(self, buf, has_check=False):
+        if self.stopped.is_set():
+            return
         msg = buf
         self.sent.put(msg)
 
     def close(self):
+        self.stopped.set()
         self.to_rx.close()
         self.sent.close()
 
