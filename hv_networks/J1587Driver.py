@@ -141,7 +141,7 @@ def parse_data_frame(buf):
     src = buf[0]
     dst = buf[3]
     segment_id = buf[4]
-    segment_data = buf[5:-1]
+    segment_data = buf[5:]
 
     return conn_mode_transfer_frame(src,dst,segment_id,segment_data)
 

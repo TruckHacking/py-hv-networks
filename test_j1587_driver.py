@@ -116,6 +116,13 @@ class J1587TestClass(unittest.TestCase):
         self.assertEqual(b'\xac\xc6\x0e\x80\x01\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48', self.j1708_driver.sent.get(block=True, timeout=1.0))
         self.assertTrue(self.j1708_driver.sent.empty())
 
+    def test_receive_reassemble_for_us(self):
+        self.j1708_driver.add_to_rx([b'\xac\xc5\x05\x80\x01\x01\x0c\x00'])
+        self.j1708_driver.add_to_rx([b'\xac\xc6\x0e\x80\x01\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48'])
+        self.j1587_driver = J1587Driver(0x80)
+        rx = self.j1587_driver.read_message(block=True)
+        self.assertEqual(b'\xac\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48', rx)
+
 
 if __name__ == "__main__":
     unittest.main()
