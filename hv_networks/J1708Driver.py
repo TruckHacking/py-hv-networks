@@ -35,7 +35,7 @@ def checksum(msg):
 
 class J1708Driver():
     '''Driver class for J1708 messages. Requires that the ecm and/or non_ecm upstart tasks
-       are running. 
+       are running.
     '''
     def __init__(self,ports=ECM):
         self.serveport,self.clientport = ports
@@ -82,15 +82,14 @@ class J1708Driver():
     def __del__(self):
         self.sock.close()
 
-        
-
 #Test to see if this works. Reads 10 messages, sends a CAT ATA SecuritySetup message.
 #You should see a reply of the form \x80\xfe\xac\xf0\x?? if it works
 if __name__ == '__main__':
     driver = J1708Driver(ECM)
+
     for i in range(0,10):
         print(repr(driver.read_message()))
-    
+
     driver.send_message(b'\xAC\xFE\x80\xF0\x17')
     for i in range(0,10):
         print(repr(driver.read_message()))

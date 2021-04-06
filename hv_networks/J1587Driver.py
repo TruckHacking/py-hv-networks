@@ -14,8 +14,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-
-from . import J1708Driver
+from hv_networks import J1708Driver
 import struct
 import threading
 import select
@@ -50,8 +49,8 @@ class conn_mgmt_frame():
         self.src = src
         self.dst = dst
         self.conn_mgmt = conn_mgmt
-        
-        
+
+
 class RTS_FRAME(conn_mgmt_frame):
     def __init__(self,src,dst,segments,length):
         super().__init__(src,dst,RTS)
@@ -138,37 +137,39 @@ class conn_mode_transfer_frame():
         return bytes([self.src,DAT_PID,2+len(self.segment_data),self.dst,self.segment_id])+self.segment_data
 
 def parse_data_frame(buf):
-    
+
     src = buf[0]
     dst = buf[3]
     segment_id = buf[4]
     segment_data = buf[5:-1]
-    
+
     return conn_mode_transfer_frame(src,dst,segment_id,segment_data)
 
 def is_data_frame(buf):
     return len(buf) >= 6 and buf[1] == DAT_PID
 
 
-
 class J1587ReceiveSession(threading.Thread):
-    def __init__(self,rts_raw,out_queue,mailbox):
-        super(J1587ReceiveSession,self).__init__()
+    def __init__(self, rts_raw, out_queue, mailbox, parent_stopped):
+        super(J1587ReceiveSession, self).__init__(name="J1587ReceiveSession")
         self.rts = parse_conn_frame(rts_raw)
         self.my_mid = self.rts.dst
         self.other_mid = self.rts.src
         self.in_queue = queue.Queue()
         self.out_queue = out_queue
         self.mailbox = mailbox
+        self.parent_stopped = parent_stopped
 
     def run(self):
         segments = self.rts.segments
         length = self.rts.length
         segment_buffer = [None] * segments
         cts = CTS_FRAME(self.my_mid,self.other_mid,segments,1)
+        if self.parent_stopped.is_set():
+            return
         self.out_queue.put(cts.to_buffer())
         start_time = time.time()
-        while None in segment_buffer and time.time() - start_time < 60:
+        while (not self.parent_stopped.is_set()) and None in segment_buffer and time.time() - start_time < 60:
             msg = None
             try:
                 msg = self.in_queue.get(block=True,timeout=2)
@@ -196,6 +197,9 @@ class J1587ReceiveSession(threading.Thread):
             else:
                 raise Exception("J1587 Session Thread shouldn't have received %s" % repr(msg))
 
+        if self.parent_stopped.is_set():
+            return
+
         if None in segment_buffer:
             abort = ABORT_FRAME(self.my_mid,self.other_mid)
             for i in range(3):
@@ -214,15 +218,20 @@ class J1587ReceiveSession(threading.Thread):
     def give(self,msg):
         self.in_queue.put(msg)
 
+    def join(self, timeout=None):
+        super(J1587ReceiveSession, self).join(timeout=timeout)
+
+
 class J1587SendSession(threading.Thread):
-    def __init__(self,src,dst,msg,out_queue,success):
-        super(J1587SendSession,self).__init__()
+    def __init__(self, src, dst, msg, out_queue, success, parent_stopped):
+        super(J1587SendSession, self).__init__(name="J1587SendSession")
         self.src = src
         self.dst = dst
         self.msg = msg
         self.out_queue = out_queue
         self.in_queue = queue.Queue()
         self.success = success
+        self.parent_stopped = parent_stopped
 
     def run(self):
         data_list = []
@@ -243,12 +252,14 @@ class J1587SendSession(threading.Thread):
 
         #send rts
         rts = RTS_FRAME(self.src,self.dst,len(data_frames),data_len)
+        if self.parent_stopped.is_set():
+            return
         self.out_queue.put(rts.to_buffer())
 
         #begin sending loop
         eom_recvd = False
         start_time = time.time()
-        while (not eom_recvd) and time.time() - start_time < 10:
+        while (not self.parent_stopped.is_set()) and (not eom_recvd) and time.time() - start_time < 10:
             try:
                 msg = self.in_queue.get(block=True,timeout=2)
             except queue.Empty:
@@ -269,20 +280,56 @@ class J1587SendSession(threading.Thread):
                     self.out_queue.put(data_frames[base+i].to_buffer())
             else:
                 pass#Either a RTS or RSD frame...why?
-            
+
         if eom_recvd:
             self.success.set()
 
     def give(self,msg):
         self.in_queue.put(msg)
 
-        
+    def join(self, timeout=None):
+        super(J1587SendSession,self).join(timeout=timeout)
+
+
+
+class J1708DriverFactory:
+    def __init__(self):
+        self.set_ecm_ports()
+
+    def set_ports(self, ports):
+        self.ports = ports
+
+    def set_ecm_ports(self):
+        self.set_ports(J1708Driver.ECM)
+
+    def set_dpa_ports(self):
+        self.set_ports(J1708Driver.DPA)
+
+    def set_plc_ports(self):
+        self.set_ports(J1708Driver.DPA)
+
+    def make(self):
+        return J1708Driver.J1708Driver(self.ports)
+
+
+j1708_factory_singleton = J1708DriverFactory()
+
+
+def set_j1708_driver_factory(factory):
+    global j1708_factory_singleton
+    j1708_factory_singleton = factory
+
+
+def get_j1708_driver_factory():
+    return j1708_factory_singleton
+
+
 class J1708WorkerThread(threading.Thread):
     def __init__(self,read_queue):
-        super(J1708WorkerThread,self).__init__()
+        super(J1708WorkerThread,self).__init__(name="J1708WorkerThread")
         self.read_queue = read_queue
         self.stopped = threading.Event()
-        self.driver = J1708Driver.J1708Driver(J1708Driver.ECM)
+        self.driver = get_j1708_driver_factory().make()
 
     def run(self):
         while not self.stopped.is_set():
@@ -298,26 +345,30 @@ class J1708WorkerThread(threading.Thread):
         super(J1708WorkerThread,self).join(timeout=timeout)
 
     def send_message(self,msg,has_check=False):
+        # FIXME: called from thread where self.driver isn't necessarily published yet
         self.driver.send_message(msg,has_check)
 
 
 class J1587WorkerThread(threading.Thread):
-    def __init__(self,my_mid):
-        super(J1587WorkerThread,self).__init__()
+    def __init__(self, my_mid, suppress_fragments):
+        super(J1587WorkerThread, self).__init__(name="J1587WorkerThread")
         self.my_mid = my_mid
+        self.suppress_fragments = suppress_fragments
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
-        self.mailbox = queue.Queue()
+        self.mailbox = multiprocessing.Queue()
         self.sessions = {}
         self.worker = J1708WorkerThread(self.read_queue)
         self.stopped = threading.Event()
+        self.worker.start()
 
     def run(self):
-        self.worker.start()
         while not self.stopped.is_set():
             qs = select.select([self.read_queue._reader,self.send_queue._reader],[],[],1)[0]
             if qs is []:
                 continue
+            if self.stopped.is_set():
+                return
             for q in qs:
                 if q is self.read_queue._reader:
                     while not self.read_queue.empty():
@@ -327,21 +378,22 @@ class J1587WorkerThread(threading.Thread):
                     while not self.send_queue.empty():
                         msg = self.send_queue.get()
                         self.worker.send_message(msg)
-                    
-
 
 
     def handle_message(self,msg):
         if len(msg) < 4 or msg[1] not in TRANSPORT_PIDS:
             self.mailbox.put(msg)
-        elif not msg[3] == self.my_mid:#connection message not for us; just pass it on
+        elif not msg[3] == self.my_mid:  # connection message not for us; just pass it on
             self.mailbox.put(msg)
         else:
+            if not self.suppress_fragments:
+                self.mailbox.put(msg)
             if bytes([msg[0]]) in list(self.sessions.keys()) and self.sessions[bytes([msg[0]])].is_alive():
                 self.sessions[bytes([msg[0]])].give(msg)
             else:
                 if is_rts_frame(msg):
-                    session = J1587ReceiveSession(msg,self.send_queue,self.mailbox)
+                    parent_stopped = self.stopped
+                    session = J1587ReceiveSession(msg, self.send_queue, self.mailbox, parent_stopped)
                     self.sessions[bytes([msg[0]])] = session
                     session.start()
                 else:
@@ -355,8 +407,9 @@ class J1587WorkerThread(threading.Thread):
         self.send_queue.put(msg)
 
     def transport_send(self,dst,msg):
+        parent_stopped = self.stopped
         success = threading.Event()
-        send_session = J1587SendSession(self.my_mid,dst,msg,self.send_queue,success)
+        send_session = J1587SendSession(self.my_mid, dst, msg, self.send_queue, success, parent_stopped)
         self.sessions[bytes([dst])] = send_session
         send_session.start()
         send_session.join()
@@ -364,18 +417,23 @@ class J1587WorkerThread(threading.Thread):
             raise TimeoutException("J1587 send either aborted or timed out")
 
     def join(self,timeout=None):
-        self.stopped.set()
         self.worker.join()
+        self.stopped.set()
+        # the queue's threads keep running, close them cleanly
+        self.send_queue.close()
+        self.mailbox.close()
         super(J1587WorkerThread,self).join(timeout=timeout)
-        
+        # the sessions's threads keep running, close them cleanly
+        self.read_queue.close()
+
 
 class J1587Driver():
     '''
     Class for J1587 comms. Abstracts transport layer and PID requests.
     '''
-    def __init__(self,my_mid):
+    def __init__(self, my_mid, suppress_fragments=True):
         self.my_mid = my_mid
-        self.J1587Thread = J1587WorkerThread(self.my_mid)
+        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments)
         self.J1587Thread.start()
 
     def read_message(self,block=True,timeout=None):
@@ -402,7 +460,7 @@ class J1587Driver():
         msg: byte string of message, without MID.
         '''
         self.J1587Thread.transport_send(dst,msg)
-    
+
     def request_pid(self,mid,pid):
         '''Request PID from a specific MID.
         MID: MID of device from which we want the response.
@@ -436,7 +494,8 @@ class J1587Driver():
 
     def __del__(self):
         self.J1587Thread.join(timeout=1)
-        
+
+
 if __name__ == '__main__':
     driver = J1587Driver(0xac)
     count = 0
@@ -447,7 +506,7 @@ if __name__ == '__main__':
 		434,435,436,437,438,443,500,509,507,508]
 
     for request in requests:
-        response = driver.request_pid(0x80,request)
+        response = driver.request_pid(0x80,request) #FIXME: sends incomplete requests for extended page PIDs should use PID 256 for that
         if response is not None:
             count += 1
         print("Response for pid %d: %s" % (request,repr(response)))
