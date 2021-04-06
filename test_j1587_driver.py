@@ -1,5 +1,7 @@
 import multiprocessing
+import queue
 import threading
+import time
 import unittest
 
 import struct
@@ -128,6 +130,22 @@ class J1587TestClass(unittest.TestCase):
         self.j1587_driver = J1587Driver(0x80)
         rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(b'\xac\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48', rx)
+
+    def test_receive_dont_reassemble_one_for_others(self):
+        self.j1708_driver.add_to_rx([b'\xac\xc5\x05\x80\x01\x01\x0c\x00'])
+        self.j1708_driver.add_to_rx([b'\xac\xc6\x0e\x80\x01\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48'])
+        self.j1587_driver = J1587Driver(0xb6)
+        self.assertRaises(queue.Empty,
+                          self.j1587_driver.read_message, block=True, timeout=1.0)
+
+    def test_receive_reassemble_one_for_others(self):
+        self.j1708_driver.add_to_rx([b'\xac\xc5\x05\x80\x01\x01\x0c\x00'])
+        self.j1708_driver.add_to_rx([b'\xac\xc6\x0e\x80\x01\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48'])
+        self.j1587_driver = J1587Driver(0xb6, reassemble_others=True)
+        rx = self.j1587_driver.read_message(block=True, timeout=1.0)
+        self.assertEqual(b'\xac\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48', rx)
+        self.assertRaises(queue.Empty,
+                          self.j1587_driver.read_message, block=True, timeout=1.0)
 
 
 if __name__ == "__main__":
