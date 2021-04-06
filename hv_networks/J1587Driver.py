@@ -436,6 +436,8 @@ class J1587WorkerThread(threading.Thread):
         super(J1587WorkerThread,self).join(timeout=timeout)
         # the sessions's threads keep running, close them cleanly
         self.read_queue.close()
+        for k,s in self.sessions.items():
+            s.join(timeout)
 
 
 class J1587Driver():
