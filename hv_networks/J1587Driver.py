@@ -174,6 +174,8 @@ class J1587ReceiveSession(threading.Thread):
             try:
                 msg = self.in_queue.get(block=True,timeout=2)
             except queue.Empty:
+                if self.parent_stopped.is_set():
+                    return
                 for i in range(segments):
                     if segment_buffer[i] is None:
                         cts = CTS_FRAME(self.my_mid,self.other_mid,1,i+1)
@@ -379,11 +381,11 @@ class J1587WorkerThread(threading.Thread):
                 return  # FIXME: there is still a race where the *_queue.get() can error out.
             for q in qs:
                 if q is self.read_queue._reader:
-                    while not self.read_queue.empty():
+                    while (not self.stopped.is_set()) and (not self.read_queue.empty()):
                         msg = self.read_queue.get()
                         self.handle_message(msg)
                 else:
-                    while not self.send_queue.empty():
+                    while (not self.stopped.is_set()) and (not self.send_queue.empty()):
                         msg = self.send_queue.get()
                         self.worker.send_message(msg)
 
