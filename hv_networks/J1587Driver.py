@@ -366,11 +366,12 @@ class J1708WorkerThread(threading.Thread):
 
 
 class J1587WorkerThread(threading.Thread):
-    def __init__(self, my_mid, suppress_fragments, preempt_cts, reassemble_others):
+    def __init__(self, my_mid, suppress_fragments, preempt_cts, silent, reassemble_others):
         super(J1587WorkerThread, self).__init__(name="J1587WorkerThread")
         self.my_mid = my_mid
         self.suppress_fragments = suppress_fragments
         self.preempt_cts = preempt_cts
+        self.silent = silent
         self.reassemble_others = reassemble_others
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
@@ -402,7 +403,8 @@ class J1587WorkerThread(threading.Thread):
                     while (not self.stopped.is_set()) and (not self.send_queue.empty()):
                         try:
                             msg = self.send_queue.get()
-                            self.worker.send_message(msg)
+                            if not self.silent:
+                                self.worker.send_message(msg)
                         except OSError:
                             if self.stopped.is_set():
                                 return
@@ -476,9 +478,9 @@ class J1587Driver():
     '''
     Class for J1587 comms. Abstracts transport layer and PID requests.
     '''
-    def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False, reassemble_others=False):
+    def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False, silent=False, reassemble_others=False):
         self.my_mid = my_mid
-        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments, preempt_cts, reassemble_others)
+        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments, preempt_cts, silent, reassemble_others)
         self.J1587Thread.start()
 
     def read_message(self,block=True,timeout=None):

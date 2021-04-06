@@ -80,6 +80,12 @@ class J1587TestClass(unittest.TestCase):
         self.j1587_driver.cleanup()
         self.fake_j1708_factory.clear()
 
+    def test_no_receive(self):
+        self.j1587_driver = J1587Driver(0xac)
+        self.j1587_driver.send_message(b'\xff\x00')
+        self.assertRaises(queue.Empty,
+                          self.j1587_driver.read_message, block=True, timeout=1.0)
+
     def test_one_send(self):
         self.assertTrue(self.j1708_driver.sent.empty())
         self.j1587_driver = J1587Driver(0xac)
@@ -98,9 +104,13 @@ class J1587TestClass(unittest.TestCase):
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
         self.j1708_driver.add_to_rx([rts_to_ac])
         self.j1708_driver.add_to_rx([dummy])
+
+        self.assertTrue(self.j1708_driver.sent.empty())
         self.j1587_driver = J1587Driver(0xac)
         rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(dummy, rx)
+        # confirm that the driver sends a CTS in response to the RTS
+        self.assertEqual(b'\xac\xc5\x04\x80\x02\x01\x01', self.j1708_driver.sent.get(block=True, timeout=1.0))
 
     def test_fragment_receive(self):
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
@@ -108,6 +118,18 @@ class J1587TestClass(unittest.TestCase):
         self.j1587_driver = J1587Driver(0xac, suppress_fragments=False)
         rx = self.j1587_driver.read_message(block=True)
         self.assertEqual(rts_to_ac, rx)
+        # confirm that the driver sends a CTS in response to the RTS
+        self.assertEqual(b'\xac\xc5\x04\x80\x02\x01\x01', self.j1708_driver.sent.get(block=True, timeout=1.0))
+
+    def test_fragment_receive_but_silent(self):
+        rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
+        self.j1708_driver.add_to_rx([rts_to_ac])
+        self.j1587_driver = J1587Driver(0xac, suppress_fragments=False, silent=True)
+        rx = self.j1587_driver.read_message(block=True)
+        self.assertEqual(rts_to_ac, rx)
+        # confirm that the driver does not send a CTS in response to the RTS
+        self.assertRaises(queue.Empty,
+                          self.j1708_driver.sent.get, block=True, timeout=1.0)
 
     def test_send_cts_waiting(self):
         self.assertTrue(self.j1708_driver.sent.empty())
