@@ -1,4 +1,5 @@
 import multiprocessing
+import threading
 import unittest
 
 import struct
@@ -12,45 +13,53 @@ from hv_networks.J1587Driver import TimeoutException
 # fake J1708Driver for testing
 class FakeJ1708Driver:
     def __init__(self):
+        self.to_rx = multiprocessing.Queue()
+        self.sent = multiprocessing.Queue()
         return
 
-    to_rx = list()
-
     def add_to_rx(self, more_rx):
-        self.to_rx.extend(more_rx)
+        for thing in more_rx:
+            self.to_rx.put(thing)
 
     def read_message(self, checksum=False, timeout=0.5):
-        if len(self.to_rx) == 0:
+        if self.to_rx.empty():
             return None
         else:
-            message = self.to_rx.pop()
+            message = self.to_rx.get()
             if checksum:  # NB: J1587Drive will always call with checksums=true
                 return message
             else:
                 return message[:-1]
-
-    sent = multiprocessing.Queue()
 
     def send_message(self, buf, has_check=False):
         msg = buf
         self.sent.put(msg)
 
     def close(self):
-        return
+        self.to_rx.close()
+        self.sent.close()
+
+    def __del__(self):
+        self.close()
 
 
 class FakeJ1708Factory(J1708DriverFactory):
     def __init__(self):
+        self.a_lock = threading.Lock()
+        with self.a_lock:
+            self.memo_fake_driver = None
         super(FakeJ1708Factory, self).__init__()
-        self.memo_fake_driver = None
 
     def make(self):
-        if self.memo_fake_driver is None:
-            self.memo_fake_driver = FakeJ1708Driver()
-        return self.memo_fake_driver
+        with self.a_lock:
+            if self.memo_fake_driver is None:
+                self.memo_fake_driver = FakeJ1708Driver()
+            a = self.memo_fake_driver
+        return a
 
     def clear(self):
-        self.memo_fake_driver = None
+        with self.a_lock:
+            self.memo_fake_driver = None
 
 
 class J1587TestClass(unittest.TestCase):
@@ -60,8 +69,8 @@ class J1587TestClass(unittest.TestCase):
         self.j1708_driver = self.fake_j1708_factory.make()
 
     def tearDown(self):
-        self.fake_j1708_factory.clear()
         self.j1587_driver.cleanup()
+        self.fake_j1708_factory.clear()
 
     def test_one_send(self):
         self.assertTrue(self.j1708_driver.sent.empty())
