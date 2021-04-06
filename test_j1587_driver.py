@@ -105,9 +105,9 @@ class J1587TestClass(unittest.TestCase):
         # J1587Driver will receive broadcast, non-transport messages
         self.assertEqual(b'\x80\x00', rx)
 
-    def test_fragment_not_receive(self):
-        dummy = b'\x80\x00'
+    def test_fragment_for_us_not_read(self):
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
+        dummy = b'\x80\x00'
         self.j1708_driver.add_to_rx([rts_to_ac])
         self.j1708_driver.add_to_rx([dummy])
 
@@ -117,6 +117,20 @@ class J1587TestClass(unittest.TestCase):
         self.assertEqual(dummy, rx)
         # confirm that the driver sends a CTS in response to the RTS
         self.assertEqual(b'\xac\xc5\x04\x80\x02\x01\x01', self.j1708_driver.sent.get(block=True, timeout=1.0))
+
+    def test_fragment_for_other_not_read(self):
+        rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'
+        dummy = b'\x80\x00'
+        self.j1708_driver.add_to_rx([rts_to_ac])
+        self.j1708_driver.add_to_rx([dummy])
+
+        self.assertTrue(self.j1708_driver.sent.empty())
+        self.j1587_driver = J1587Driver(0xb6)
+        rx = self.j1587_driver.read_message(block=True)
+        self.assertEqual(dummy, rx)
+        # confirm that the driver does not send a CTS in response to the RTS
+        self.assertRaises(queue.Empty,
+                          self.j1708_driver.sent.get, block=True, timeout=1.0)
 
     def test_fragment_receive(self):
         rts_to_ac = b'\x80\xc5\x04\xac\x01\x01\x00\x01'

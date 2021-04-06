@@ -477,6 +477,13 @@ class J1587WorkerThread(threading.Thread):
 class J1587Driver():
     '''
     Class for J1587 comms. Abstracts transport layer and PID requests.
+    my_mid: the 'source' MID of this driver. Listens for transport frames destined to this MID. send_message() ignores
+        this value.
+    suppress_fragments: do not return transport fragments from read_message(). default True.
+    preempt_cts: send transport fragments without waiting for target node CTS. default False.
+    silent: do not send any messages (e.g. responses to transport frames). default False
+    reassemble_others: track, respond to and reassemble transport frames destines for nodes other than my_mid.
+        default False.
     '''
     def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False, silent=False, reassemble_others=False):
         self.my_mid = my_mid
