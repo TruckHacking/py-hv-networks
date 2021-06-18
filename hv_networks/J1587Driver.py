@@ -350,6 +350,7 @@ class J1708WorkerThread(threading.Thread):
         while not self.stopped.is_set():
             msg = self.driver.read_message(checksum=True,timeout=0.1)
             if msg is not None:
+                msg = bytes(msg)
                 self.read_queue.put(msg)
 
         self.driver.close()
