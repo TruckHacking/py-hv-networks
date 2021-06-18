@@ -172,7 +172,7 @@ class J1587ReceiveSession(threading.Thread):
         while (not self.parent_stopped.is_set()) and None in segment_buffer and time.time() - start_time < 60:
             msg = None
             try:
-                msg = self.in_queue.get(block=True,timeout=2)
+                msg = self.in_queue.get(block=True,timeout=2)  # FIXME: magic number 2
             except queue.Empty:
                 if self.parent_stopped.is_set():
                     return
@@ -348,7 +348,7 @@ class J1708WorkerThread(threading.Thread):
 
     def run(self):
         while not self.stopped.is_set():
-            msg = self.driver.read_message(checksum=True,timeout=0.1)
+            msg = self.driver.read_message(checksum=True,timeout=0.1)  # FIXME: magic number 0.1
             if msg is not None:
                 msg = bytes(msg)
                 self.read_queue.put(msg)
