@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='hv-networks',
-      version="0.1",
+      version="0.2",
       description="Easy-ish Python interfaces to TruckDuck network interfaces",
       url="http://www.github.com/TruckHacking/py-hv-networks",
       author="Haystack",
