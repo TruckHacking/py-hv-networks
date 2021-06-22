@@ -577,6 +577,14 @@ class J1587Driver():
         '''
         self.J1587Thread.transport_send(dst,msg)
 
+    def pid_send(self, pid, data):
+        '''
+        Sends a PID and data, breaks into multisection parameter if the data + PID is longer than 21 bytes
+        :param pid: the PID
+        :param data:  the data
+        '''
+        raise NotImplemented("FIXME implement this")
+
     def request_pid(self,mid,pid):
         '''Request PID from a specific MID.
         MID: MID of device from which we want the response.
