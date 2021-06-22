@@ -527,7 +527,7 @@ class J1587Driver():
         recvd = False
         response = None
         while not recvd and time.time() - start_time <= timeout:
-            if pid < 255:
+            if pid < 255:  # FIXME: sends incomplete requests for extended page PIDs. It should use PID 256 for that
                 request = bytes([self.my_mid,0,pid])
             else:
                 request = bytes([self.my_mid,0,255,pid % 256])
