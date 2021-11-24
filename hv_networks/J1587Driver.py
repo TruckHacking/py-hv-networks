@@ -13,6 +13,7 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>
+from types import SimpleNamespace
 
 from hv_networks import J1708Driver
 import struct
@@ -41,9 +42,13 @@ class TimeoutException(Exception):
     def __str__(self):
         return repr(self.value)
 
+
 MGMT_PID = 197
 DAT_PID = 198
-TRANSPORT_PIDS = [MGMT_PID,DAT_PID]
+TRANSPORT_PIDS = [MGMT_PID, DAT_PID]
+MULTISECTION_PID = 192
+
+
 class conn_mgmt_frame():
     def __init__(self,src=None,dst=None,conn_mgmt=None):
         self.src = src
@@ -149,9 +154,9 @@ def is_data_frame(buf):
     return len(buf) >= 6 and buf[1] == DAT_PID
 
 
-class J1587ReceiveSession(threading.Thread):
+class J1587TransportReceiveSession(threading.Thread):
     def __init__(self, rts_raw, out_queue, mailbox, parent_stopped):
-        super(J1587ReceiveSession, self).__init__(name="J1587ReceiveSession")
+        super(J1587TransportReceiveSession, self).__init__(name="J1587TransportReceiveSession")
         self.rts = parse_conn_frame(rts_raw)
         self.my_mid = self.rts.dst
         self.other_mid = self.rts.src
@@ -221,7 +226,7 @@ class J1587ReceiveSession(threading.Thread):
         self.in_queue.put(msg)
 
     def join(self, timeout=None):
-        super(J1587ReceiveSession, self).join(timeout=timeout)
+        super(J1587TransportReceiveSession, self).join(timeout=timeout)
 
 
 class J1587SendSession(threading.Thread):
@@ -377,7 +382,8 @@ class J1587WorkerThread(threading.Thread):
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
         self.mailbox = multiprocessing.Queue()
-        self.sessions = {}
+        self.transport_sessions = {}
+        self.multisection_sessions = {}
         self.worker = J1708WorkerThread(self.read_queue)
         self.stopped = threading.Event()
         self.worker.start()
@@ -413,37 +419,92 @@ class J1587WorkerThread(threading.Thread):
                                 raise
 
     # Note: src and dst are wrt _send_ sessions
-    def get_session(self, src, dst):
-        return self.sessions.get((src, dst), None)
+    def get_transport_session(self, src, dst):
+        return self.transport_sessions.get((src, dst), None)
 
     # Note: src and dst are wrt _send_ sessions
-    def update_session(self, src, dst, value):
-        self.sessions.update({(src, dst): value})
+    def update_transport_session(self, src, dst, value):
+        self.transport_sessions.update({(src, dst): value})
+
+    def update_multisection_session(self, src_mid, target_pid, session):
+        return self.multisection_sessions.update({(src_mid, target_pid): session})
+
+    def clear_multisection_session(self, src_mid, target_pid):
+        return self.multisection_sessions.pop((src_mid, target_pid))
+
+    def get_multisection_session(self, src_mid, target_pid):
+        return self.multisection_sessions.get((src_mid, target_pid), None)
 
     def handle_message(self,msg):
-        if len(msg) < 4 or msg[1] not in TRANSPORT_PIDS:
-            self.mailbox.put(msg)
-        else:
+        if msg[1] in TRANSPORT_PIDS:
+            if len(msg) < 4:  # too short, maybe invalid: in any case pass-on for receive
+                self.mailbox.put(msg)
+                return
             if not self.suppress_fragments:
                 self.mailbox.put(msg)
-            if not msg[3] == self.my_mid:  # connection message not for us
+
+            dst = msg[3]
+            if not dst == self.my_mid:  # connection message not for us
                 if not self.reassemble_others:
                     return
+            self.handle_transport_message(dst, msg[0], msg)
+        elif msg[1] == MULTISECTION_PID:
+            if not self.suppress_fragments:
+                self.mailbox.put(msg)
 
-            src = msg[3]
-            dst = msg[0]
-            known_session = self.get_session(src, dst)
-            if (known_session is not None) and known_session.is_alive():
-                known_session.give(msg)
+            self.handle_multisection_message(msg)
+        else:
+            self.mailbox.put(msg)
+
+    def handle_transport_message(self, dst, src, msg):
+        known_session = self.get_transport_session(dst, src)
+        if (known_session is not None) and known_session.is_alive():
+            known_session.give(msg)
+        else:
+            if is_rts_frame(msg):
+                parent_stopped = self.stopped
+                session = J1587TransportReceiveSession(msg, self.send_queue, self.mailbox, parent_stopped)
+                self.update_transport_session(dst, src, session)
+                session.start()
             else:
-                if is_rts_frame(msg):
-                    parent_stopped = self.stopped
-                    session = J1587ReceiveSession(msg, self.send_queue, self.mailbox, parent_stopped)
-                    self.update_session(src, dst, session)
-                    session.start()
-                else:
-                    abort = ABORT_FRAME(self.my_mid, dst)
-                    self.send_queue.put(abort.to_buffer())
+                abort = ABORT_FRAME(self.my_mid, src)
+                self.send_queue.put(abort.to_buffer())
+
+    def handle_multisection_message(self, msg):
+        if len(msg) < 5:  # too short, maybe invalid, in any case pass-on for receive
+            self.mailbox.put(msg)
+            return
+        src = msg[0]
+        target_pid = msg[3]
+        section_final = (msg[4] & 0xF0) >> 4
+        section_this = (msg[4] & 0x0F)
+        if section_this == 0:  # this is the first frame ('section')
+            session = SimpleNamespace(target_len=msg[5],
+                                      last_seen_section=0,
+                                      acc_bytes=msg[6:])  # data starts at index 6 in first frame
+            self.update_multisection_session(src, target_pid, session)
+        else:
+            session = self.get_multisection_session(src, target_pid)
+            if session is None:  # invalid, in any case pass-on for receive
+                self.mailbox.put(msg)
+                return
+
+            if session.last_seen_section + 1 != section_this:  # invalid, in any case pass-on for receive
+                self.clear_multisection_session(src, target_pid)
+                self.mailbox.put(msg)
+                return
+
+            session.last_seen_section = section_this
+            session.acc_bytes += msg[5:]  # data starts at index 5 in subsequent frames
+
+            if section_this == section_final and len(session.acc_bytes) == session.target_len:  # all received
+                final = bytes([src, target_pid])
+                final += bytes([len(session.acc_bytes)])
+                final += session.acc_bytes
+                self.mailbox.put(final)
+                self.clear_multisection_session(src, target_pid)
+            else:
+                self.update_multisection_session(src, target_pid, session)
 
     def read_message(self,block=True,timeout=None):
         return self.mailbox.get(block=block,timeout=timeout)
@@ -456,7 +517,7 @@ class J1587WorkerThread(threading.Thread):
         success = threading.Event()
         send_session = J1587SendSession(self.my_mid, dst, msg, self.send_queue, success, parent_stopped,
                                         self.preempt_cts)
-        self.update_session(self.my_mid, dst, send_session)
+        self.update_transport_session(self.my_mid, dst, send_session)
         send_session.start()
         send_session.join()
         if not success.is_set():
@@ -469,9 +530,9 @@ class J1587WorkerThread(threading.Thread):
         self.send_queue.close()
         self.mailbox.close()
         super(J1587WorkerThread,self).join(timeout=timeout)
-        # the sessions's threads keep running, close them cleanly
+        # the transport_sessions's threads keep running, close them cleanly
         self.read_queue.close()
-        for k,s in self.sessions.items():
+        for k,s in self.transport_sessions.items():
             s.join(timeout)
 
 
@@ -516,6 +577,14 @@ class J1587Driver():
         '''
         self.J1587Thread.transport_send(dst,msg)
 
+    def pid_send(self, pid, data):
+        '''
+        Sends a PID and data, breaks into multisection parameter if the data + PID is longer than 21 bytes
+        :param pid: the PID
+        :param data:  the data
+        '''
+        raise NotImplemented("FIXME implement this")
+
     def request_pid(self,mid,pid):
         '''Request PID from a specific MID.
         MID: MID of device from which we want the response.
@@ -527,7 +596,7 @@ class J1587Driver():
         recvd = False
         response = None
         while not recvd and time.time() - start_time <= timeout:
-            if pid < 255:
+            if pid < 255:  # FIXME: sends incomplete requests for extended page PIDs. It should use PID 256 for that
                 request = bytes([self.my_mid,0,pid])
             else:
                 request = bytes([self.my_mid,0,255,pid % 256])

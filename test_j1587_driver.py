@@ -189,6 +189,50 @@ class J1587TestClass(unittest.TestCase):
         self.assertRaises(queue.Empty,
                           self.j1587_driver.read_message, block=True, timeout=1.0)
 
+    def test_receive_reassemble_multisection_component_id(self):
+        self.j1708_driver.add_to_rx([
+                                    bytes([0x80, 192, 17, 243, 32, 33,
+                                           0x80,
+                                           0x43, 0x43, 0x43, 0x43, 0x43, 0x2a,
+                                           0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44
+                                           ]),
+                                    bytes([0x80, 192, 17, 243, 33,
+                                           0x44, 0x44, 0x44, 0x2a,
+                                           0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56,
+                                           ]),
+                                    bytes([0x80, 192,  6, 243, 34,
+                                           0x56, 0x56, 0x56, 0x56])
+                                    ])
+
+        self.j1587_driver = J1587Driver(0xb6, reassemble_others=True)
+        rx = self.j1587_driver.read_message(block=True, timeout=1.0)
+        self.assertEqual(bytes([0x80, 243,
+                                0x21,
+                                0x80, 0x43, 0x43, 0x43, 0x43, 0x43, 0x2a,
+                                0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x2a,
+                                0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56, 0x56
+                                ]), rx)
+        self.assertRaises(queue.Empty,
+                          self.j1587_driver.read_message, block=True, timeout=1.0)
+
+    def test_receive_reassemble_multisection_diagnostic_code(self):
+        self.j1708_driver.add_to_rx([
+                                    bytes([0x88, 192, 0x0f, 194, 0x10, 0x15,
+                                           0x6,
+                                           0xb5, 0x0f, 0x05, 0xb5, 0x0f, 0x04, 0xb5, 0x0f, 0x03, 0xb5, 0x0f]),
+                                    bytes([0x88, 192, 0x0b, 194, 0x11,
+                                           0x01, 0xb5, 0x0f, 0x02, 0xb5, 0x0f, 0xfd, 0xb2, 0x11])
+                                    ])
+
+        self.j1587_driver = J1587Driver(0xb6, reassemble_others=True)
+        rx = self.j1587_driver.read_message(block=True, timeout=1.0)
+        self.assertEqual(bytes([0x88, 194,
+                                21,
+                                0x6, 0xb5, 0x0f, 0x05, 0xb5, 0x0f, 0x04, 0xb5, 0x0f, 0x03, 0xb5, 0x0f,
+                                0x01, 0xb5, 0x0f, 0x02, 0xb5, 0x0f, 0xfd, 0xb2, 0x11
+                                ]), rx)
+        self.assertRaises(queue.Empty,
+                          self.j1587_driver.read_message, block=True, timeout=1.0)
 
 if __name__ == "__main__":
     unittest.main()
