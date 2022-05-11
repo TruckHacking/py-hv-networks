@@ -367,6 +367,8 @@ class J1708WorkerThread(threading.Thread):
 
     def send_message(self,msg,has_check=False):
         # FIXME: not performant but lock needed b/c called from thread where self.driver isn't necessarily published yet
+        if self.stopped.is_set():
+            return
         with self.a_lock:
             self.driver.send_message(msg,has_check)
 
