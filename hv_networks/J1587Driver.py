@@ -367,18 +367,21 @@ class J1708WorkerThread(threading.Thread):
 
     def send_message(self,msg,has_check=False):
         # FIXME: not performant but lock needed b/c called from thread where self.driver isn't necessarily published yet
+        if self.stopped.is_set():
+            return
         with self.a_lock:
             self.driver.send_message(msg,has_check)
 
 
 class J1587WorkerThread(threading.Thread):
-    def __init__(self, my_mid, suppress_fragments, preempt_cts, silent, reassemble_others):
+    def __init__(self, my_mid, suppress_fragments, preempt_cts, silent, reassemble_others, pass_invalid_messages):
         super(J1587WorkerThread, self).__init__(name="J1587WorkerThread")
         self.my_mid = my_mid
         self.suppress_fragments = suppress_fragments
         self.preempt_cts = preempt_cts
         self.silent = silent
         self.reassemble_others = reassemble_others
+        self.pass_invalid_messages = pass_invalid_messages
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
         self.mailbox = multiprocessing.Queue()
@@ -436,6 +439,10 @@ class J1587WorkerThread(threading.Thread):
         return self.multisection_sessions.get((src_mid, target_pid), None)
 
     def handle_message(self,msg):
+        if len(msg) < 2:
+            if self.pass_invalid_messages:
+                self.mailbox.put(msg)
+            return  # not valid J1587
         if msg[1] in TRANSPORT_PIDS:
             if len(msg) < 4:  # too short, maybe invalid: in any case pass-on for receive
                 self.mailbox.put(msg)
@@ -544,12 +551,17 @@ class J1587Driver():
     suppress_fragments: do not return transport fragments from read_message(). default True.
     preempt_cts: send transport fragments without waiting for target node CTS. default False.
     silent: do not send any messages (e.g. responses to transport frames). default False
-    reassemble_others: track, respond to and reassemble transport frames destines for nodes other than my_mid.
+    reassemble_others: track, respond to and reassemble transport frames destined for nodes other than my_mid.
+        default False.
+    pass_invalid_messages: when invalid J1587 messages (or non-J1587 messages) are encountered, pass them on to
+        read_message() anyways
         default False.
     '''
-    def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False, silent=False, reassemble_others=False):
+    def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False, silent=False, reassemble_others=False,
+                 pass_invalid_messages=False):
         self.my_mid = my_mid
-        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments, preempt_cts, silent, reassemble_others)
+        self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments, preempt_cts, silent, reassemble_others,
+                                             pass_invalid_messages)
         self.J1587Thread.start()
 
     def read_message(self,block=True,timeout=None):
