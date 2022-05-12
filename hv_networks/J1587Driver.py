@@ -393,6 +393,7 @@ class J1587WorkerThread(threading.Thread):
 
     def run(self):
         while not self.stopped.is_set():
+            # FIXME : stop using select.select on two queues. Merge the queue. select.select won't work on Windows
             qs = select.select([self.read_queue._reader,self.send_queue._reader],[],[],1)[0]
             if qs is []:
                 continue
