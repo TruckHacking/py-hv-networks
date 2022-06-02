@@ -343,9 +343,10 @@ def get_j1708_driver_factory():
 
 
 class J1708WorkerThread(threading.Thread):
-    def __init__(self,read_queue):
+    def __init__(self, read_queue, loopback):
         super(J1708WorkerThread,self).__init__(name="J1708WorkerThread")
         self.read_queue = read_queue
+        self.loopback = loopback
         self.stopped = threading.Event()
         self.a_lock = threading.Lock()
         with self.a_lock:
@@ -370,11 +371,14 @@ class J1708WorkerThread(threading.Thread):
         if self.stopped.is_set():
             return
         with self.a_lock:
-            self.driver.send_message(msg,has_check)
+            self.driver.send_message(msg, has_check)
+        if self.loopback:
+            self.read_queue.put(J1708Driver.J1708Driver.prepare_message(msg, has_check))
 
 
 class J1587WorkerThread(threading.Thread):
-    def __init__(self, my_mid, suppress_fragments, preempt_cts, silent, reassemble_others, pass_invalid_messages):
+    def __init__(self, my_mid, suppress_fragments, preempt_cts, silent, reassemble_others, pass_invalid_messages,
+                 loopback):
         super(J1587WorkerThread, self).__init__(name="J1587WorkerThread")
         self.my_mid = my_mid
         self.suppress_fragments = suppress_fragments
@@ -382,12 +386,13 @@ class J1587WorkerThread(threading.Thread):
         self.silent = silent
         self.reassemble_others = reassemble_others
         self.pass_invalid_messages = pass_invalid_messages
+        self.loopback = loopback
         self.read_queue = multiprocessing.Queue()
         self.send_queue = multiprocessing.Queue()
         self.mailbox = multiprocessing.Queue()
         self.transport_sessions = {}
         self.multisection_sessions = {}
-        self.worker = J1708WorkerThread(self.read_queue)
+        self.worker = J1708WorkerThread(self.read_queue, loopback)  # puts messages with checksum onto read_queue
         self.stopped = threading.Event()
         self.worker.start()
 
@@ -557,12 +562,13 @@ class J1587Driver():
     pass_invalid_messages: when invalid J1587 messages (or non-J1587 messages) are encountered, pass them on to
         read_message() anyways
         default False.
+    loopback: echo all sent messages back as read messages too. default False.
     '''
     def __init__(self, my_mid, suppress_fragments=True, preempt_cts=False, silent=False, reassemble_others=False,
-                 pass_invalid_messages=False):
+                 pass_invalid_messages=False, loopback=False):
         self.my_mid = my_mid
         self.J1587Thread = J1587WorkerThread(self.my_mid, suppress_fragments, preempt_cts, silent, reassemble_others,
-                                             pass_invalid_messages)
+                                             pass_invalid_messages, loopback)
         self.J1587Thread.start()
 
     def read_message(self,block=True,timeout=None):
