@@ -155,14 +155,14 @@ def is_data_frame(buf):
 
 
 class J1587TransportReceiveSession(threading.Thread):
-    def __init__(self, rts_raw, out_queue, mailbox, parent_stopped):
+    def __init__(self, rts_raw, out_queue, parent, parent_stopped):
         super(J1587TransportReceiveSession, self).__init__(name="J1587TransportReceiveSession")
         self.rts = parse_conn_frame(rts_raw)
         self.my_mid = self.rts.dst
         self.other_mid = self.rts.src
         self.in_queue = queue.Queue()
         self.out_queue = out_queue
-        self.mailbox = mailbox
+        self.parent = parent
         self.parent_stopped = parent_stopped
 
     def run(self):
@@ -225,7 +225,7 @@ class J1587TransportReceiveSession(threading.Thread):
         for segment in segment_buffer:
             data += segment.segment_data
 
-        self.mailbox.put(data)
+        self.parent.message_received(data, has_checksum=False)
 
     def give(self,msg):
         self.in_queue.put(msg)
@@ -417,7 +417,12 @@ class J1587WorkerThread(threading.Thread):
                     while (not self.stopped.is_set()) and (not self.read_queue.empty()):
                         try:
                             msg = self.read_queue.get()
-                            self.handle_message(msg)
+                            test_checksum = J1708Driver.J1708Driver.prepare_message(msg[:-1], has_checksum=False)[-1]
+                            if test_checksum != msg[-1]:
+                                if self.pass_invalid_messages:
+                                    self.message_received(msg)
+                            else:
+                                self.handle_message(msg)
                         except OSError:
                             if self.stopped.is_set():
                                 return
@@ -433,6 +438,11 @@ class J1587WorkerThread(threading.Thread):
                                 return
                             else:
                                 raise
+
+    def message_received(self, msg, has_checksum):
+        if has_checksum:
+            msg = msg[:-1]
+        self.mailbox.put(msg)
 
     # Note: src and dst are wrt _send_ sessions
     def get_transport_session(self, src, dst):
@@ -451,41 +461,41 @@ class J1587WorkerThread(threading.Thread):
     def get_multisection_session(self, src_mid, target_pid):
         return self.multisection_sessions.get((src_mid, target_pid), None)
 
-    def handle_message(self,msg):
+    def handle_message(self, msg):
         if len(msg) < 2:
             if self.pass_invalid_messages:
-                self.mailbox.put(msg)
+                self.message_received(msg, has_checksum=True)
             return  # not valid J1587
         if msg[1] in TRANSPORT_PIDS:
             if len(msg) < 4:  # too short, maybe invalid: in any case pass-on for receive
-                self.mailbox.put(msg)
+                self.message_received(msg, has_checksum=True)
                 return
             if not self.suppress_fragments:
-                self.mailbox.put(msg)
+                self.message_received(msg, has_checksum=True)
 
             dst = msg[3]
             if not dst == self.my_mid:  # connection message not for us
                 if not self.reassemble_others:
                     return
-            self.handle_transport_message(dst, msg[0], msg)
+            self.handle_transport_message(dst, msg[0], msg[:-1])  # takes message w/o checksum
         elif msg[1] == MULTISECTION_PID:
             if not self.suppress_fragments:
-                self.mailbox.put(msg)
+                self.message_received(msg, has_checksum=True)
 
-            self.handle_multisection_message(msg)
+            self.handle_multisection_message(msg[:-1])  # takes message w/o checksum
         else:
-            self.mailbox.put(msg)
+            self.message_received(msg, has_checksum=True)
 
-    def handle_transport_message(self, dst, src, msg):
+    def handle_transport_message(self, dst, src, msg_no_checksum):
         known_session = self.get_transport_session(dst, src)
         if (known_session is not None) and known_session.is_alive():
-            known_session.give(msg)
+            known_session.give(msg_no_checksum)
         else:
-            if is_rts_frame(msg):
+            if is_rts_frame(msg_no_checksum):
                 parent_stopped = self.stopped
-                session = J1587TransportReceiveSession(msg,
+                session = J1587TransportReceiveSession(msg_no_checksum,
                                                        None if self.silent else self.send_queue,
-                                                       self.mailbox,
+                                                       self,
                                                        parent_stopped)
                 self.update_transport_session(dst, src, session)
                 session.start()
@@ -494,38 +504,38 @@ class J1587WorkerThread(threading.Thread):
                 if not self.silent:
                     self.send_queue.put(abort.to_buffer())
 
-    def handle_multisection_message(self, msg):
-        if len(msg) < 5:  # too short, maybe invalid, in any case pass-on for receive
-            self.mailbox.put(msg)
+    def handle_multisection_message(self, msg_no_checksum):
+        if len(msg_no_checksum) < 5:  # too short, maybe invalid, in any case pass-on for receive
+            self.message_received(msg_no_checksum, has_checksum=False)
             return
-        src = msg[0]
-        target_pid = msg[3]
-        section_final = (msg[4] & 0xF0) >> 4
-        section_this = (msg[4] & 0x0F)
+        src = msg_no_checksum[0]
+        target_pid = msg_no_checksum[3]
+        section_final = (msg_no_checksum[4] & 0xF0) >> 4
+        section_this = (msg_no_checksum[4] & 0x0F)
         if section_this == 0:  # this is the first frame ('section')
-            session = SimpleNamespace(target_len=msg[5],
+            session = SimpleNamespace(target_len=msg_no_checksum[5],
                                       last_seen_section=0,
-                                      acc_bytes=msg[6:])  # data starts at index 6 in first frame
+                                      acc_bytes=msg_no_checksum[6:])  # data starts at index 6 in first frame
             self.update_multisection_session(src, target_pid, session)
         else:
             session = self.get_multisection_session(src, target_pid)
             if session is None:  # invalid, in any case pass-on for receive
-                self.mailbox.put(msg)
+                self.message_received(msg_no_checksum, has_checksum=False)
                 return
 
             if session.last_seen_section + 1 != section_this:  # invalid, in any case pass-on for receive
                 self.clear_multisection_session(src, target_pid)
-                self.mailbox.put(msg)
+                self.message_received(msg_no_checksum, has_checksum=False)
                 return
 
             session.last_seen_section = section_this
-            session.acc_bytes += msg[5:]  # data starts at index 5 in subsequent frames
+            session.acc_bytes += msg_no_checksum[5:]  # data starts at index 5 in subsequent frames
 
             if section_this == section_final and len(session.acc_bytes) == session.target_len:  # all received
                 final = bytes([src, target_pid])
                 final += bytes([len(session.acc_bytes)])
                 final += session.acc_bytes
-                self.mailbox.put(final)
+                self.message_received(final, has_checksum=False)
                 self.clear_multisection_session(src, target_pid)
             else:
                 self.update_multisection_session(src, target_pid, session)
