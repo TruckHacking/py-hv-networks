@@ -13,6 +13,7 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>
+import enum
 from types import SimpleNamespace
 
 from hv_networks import J1708Driver
@@ -384,6 +385,20 @@ class J1708WorkerThread(threading.Thread):
             self.read_queue.put(J1708Driver.J1708Driver.prepare_message(msg, has_check))
 
 
+class InOutTags(enum.Enum):
+    Send = 1
+    Read = 2
+
+
+class TaggingPutOnlyQueue():
+    def __init__(self, q: multiprocessing.Queue, tag: InOutTags):
+        self.tag = tag
+        self.q = q
+
+    def put(self, obj):
+        self.q.put([self.tag, obj])
+
+
 class J1587WorkerThread(threading.Thread):
     def __init__(self, my_mid, suppress_fragments, preempt_cts, silent, reassemble_others, pass_invalid_messages,
                  loopback):
@@ -395,8 +410,9 @@ class J1587WorkerThread(threading.Thread):
         self.reassemble_others = reassemble_others
         self.pass_invalid_messages = pass_invalid_messages
         self.loopback = loopback
-        self.read_queue = multiprocessing.Queue()
-        self.send_queue = multiprocessing.Queue()
+        self.uni_queue = multiprocessing.Queue()
+        self.read_queue = TaggingPutOnlyQueue(self.uni_queue, InOutTags.Read)
+        self.send_queue = TaggingPutOnlyQueue(self.uni_queue, InOutTags.Send)
         self.mailbox = multiprocessing.Queue()
         self.transport_sessions = {}
         self.multisection_sessions = {}
@@ -406,38 +422,31 @@ class J1587WorkerThread(threading.Thread):
 
     def run(self):
         while not self.stopped.is_set():
-            # FIXME : stop using select.select on two queues. Merge the queue. select.select won't work on Windows
-            qs = select.select([self.read_queue._reader,self.send_queue._reader],[],[],1)[0]
-            if qs is []:
-                continue
-            if self.stopped.is_set():
-                return  # FIXME: there is still a race where the *_queue.get() can error out.
-            for q in qs:
-                if q is self.read_queue._reader:
-                    while (not self.stopped.is_set()) and (not self.read_queue.empty()):
-                        try:
-                            msg = self.read_queue.get()
-                            test_checksum = J1708Driver.J1708Driver.prepare_message(msg[:-1], has_checksum=False)[-1]
-                            if test_checksum != msg[-1]:
-                                if self.pass_invalid_messages:
-                                    self.message_received(msg)
-                            else:
-                                self.handle_message(msg)
-                        except OSError:
-                            if self.stopped.is_set():
-                                return
-                            else:
-                                raise
+            try:
+                tag, msg = self.uni_queue.get(block=True, timeout=1.0)
+                if tag == InOutTags.Read:
+                    try:
+                        test_checksum = J1708Driver.J1708Driver.prepare_message(msg[:-1], has_checksum=False)[-1]
+                        if test_checksum != msg[-1]:
+                            if self.pass_invalid_messages:
+                                self.message_received(msg)
+                        else:
+                            self.handle_message(msg)
+                    except OSError:
+                        if self.stopped.is_set():
+                            return
+                        else:
+                            raise
                 else:
-                    while (not self.stopped.is_set()) and (not self.send_queue.empty()):
-                        try:
-                            msg = self.send_queue.get()
-                            self.worker.send_message(msg)
-                        except OSError:
-                            if self.stopped.is_set():
-                                return
-                            else:
-                                raise
+                    try:
+                        self.worker.send_message(msg)
+                    except OSError:
+                        if self.stopped.is_set():
+                            return
+                        else:
+                            raise
+            except queue.Empty:
+                continue
 
     def message_received(self, msg, has_checksum):
         if has_checksum:
@@ -562,11 +571,10 @@ class J1587WorkerThread(threading.Thread):
         self.worker.join()
         self.stopped.set()
         # the queue's threads keep running, close them cleanly
-        self.send_queue.close()
         self.mailbox.close()
         super(J1587WorkerThread,self).join(timeout=timeout)
         # the transport_sessions's threads keep running, close them cleanly
-        self.read_queue.close()
+        self.uni_queue.close()
         for k,s in self.transport_sessions.items():
             s.join(timeout)
 
