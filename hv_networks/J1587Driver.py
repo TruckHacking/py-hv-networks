@@ -172,7 +172,8 @@ class J1587TransportReceiveSession(threading.Thread):
         cts = CTS_FRAME(self.my_mid,self.other_mid,segments,1)
         if self.parent_stopped.is_set():
             return
-        self.out_queue.put(cts.to_buffer())
+        if self.out_queue:
+            self.out_queue.put(cts.to_buffer())
         start_time = time.time()
         while (not self.parent_stopped.is_set()) and None in segment_buffer and time.time() - start_time < 60:
             msg = None
@@ -184,7 +185,8 @@ class J1587TransportReceiveSession(threading.Thread):
                 for i in range(segments):
                     if segment_buffer[i] is None:
                         cts = CTS_FRAME(self.my_mid,self.other_mid,1,i+1)
-                        self.out_queue.put(cts.to_buffer())
+                        if self.out_queue:
+                            self.out_queue.put(cts.to_buffer())
                         time.sleep(.1)
             if msg is None:
                 continue
@@ -196,7 +198,8 @@ class J1587TransportReceiveSession(threading.Thread):
             elif is_conn_frame(msg):
                 abort = ABORT_FRAME(self.my_mid,self.other_mid)
                 for i in range(3):
-                    self.out_queue.put(abort.to_buffer())
+                    if self.out_queue:
+                        self.out_queue.put(abort.to_buffer())
                     break
             elif is_data_frame(msg):
                 dat = parse_data_frame(msg)
@@ -210,12 +213,14 @@ class J1587TransportReceiveSession(threading.Thread):
         if None in segment_buffer:
             abort = ABORT_FRAME(self.my_mid,self.other_mid)
             for i in range(3):
-                self.out_queue.put(abort.to_buffer())
+                if self.out_queue:
+                    self.out_queue.put(abort.to_buffer())
             return #timed out
 
         eom = EOM_FRAME(self.my_mid,self.other_mid)
         for i in range(3):
-            self.out_queue.put(eom.to_buffer())
+            if self.out_queue:
+                self.out_queue.put(eom.to_buffer())
         data = bytes([self.other_mid])
         for segment in segment_buffer:
             data += segment.segment_data
@@ -262,11 +267,13 @@ class J1587SendSession(threading.Thread):
         rts = RTS_FRAME(self.src,self.dst,len(data_frames),data_len)
         if self.parent_stopped.is_set():
             return
-        self.out_queue.put(rts.to_buffer())
+        if self.out_queue:
+            self.out_queue.put(rts.to_buffer())
 
         if self.preempt_cts:  # special handling when we want to ignore any target CTS frames: just send it all
             for i in range(len(data_frames)):
-                self.out_queue.put(data_frames[i].to_buffer())
+                if self.out_queue:
+                    self.out_queue.put(data_frames[i].to_buffer())
             self.success.set()
             return
 
@@ -291,7 +298,8 @@ class J1587SendSession(threading.Thread):
             elif frame.conn_mgmt == CTS:
                 base = frame.next_segment - 1
                 for i in range(frame.num_segments):
-                    self.out_queue.put(data_frames[base+i].to_buffer())
+                    if self.out_queue:
+                        self.out_queue.put(data_frames[base+i].to_buffer())
             else:
                 pass#Either a RTS or RSD frame...why?
 
@@ -419,8 +427,7 @@ class J1587WorkerThread(threading.Thread):
                     while (not self.stopped.is_set()) and (not self.send_queue.empty()):
                         try:
                             msg = self.send_queue.get()
-                            if not self.silent:
-                                self.worker.send_message(msg)
+                            self.worker.send_message(msg)
                         except OSError:
                             if self.stopped.is_set():
                                 return
@@ -476,12 +483,16 @@ class J1587WorkerThread(threading.Thread):
         else:
             if is_rts_frame(msg):
                 parent_stopped = self.stopped
-                session = J1587TransportReceiveSession(msg, self.send_queue, self.mailbox, parent_stopped)
+                session = J1587TransportReceiveSession(msg,
+                                                       None if self.silent else self.send_queue,
+                                                       self.mailbox,
+                                                       parent_stopped)
                 self.update_transport_session(dst, src, session)
                 session.start()
             else:
                 abort = ABORT_FRAME(self.my_mid, src)
-                self.send_queue.put(abort.to_buffer())
+                if not self.silent:
+                    self.send_queue.put(abort.to_buffer())
 
     def handle_multisection_message(self, msg):
         if len(msg) < 5:  # too short, maybe invalid, in any case pass-on for receive
@@ -528,7 +539,8 @@ class J1587WorkerThread(threading.Thread):
     def transport_send(self,dst,msg):
         parent_stopped = self.stopped
         success = threading.Event()
-        send_session = J1587SendSession(self.my_mid, dst, msg, self.send_queue, success, parent_stopped,
+        send_session = J1587SendSession(self.my_mid, dst, msg,
+                                        None if self.silent else self.send_queue, success, parent_stopped,
                                         self.preempt_cts)
         self.update_transport_session(self.my_mid, dst, send_session)
         send_session.start()
