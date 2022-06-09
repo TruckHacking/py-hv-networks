@@ -5,7 +5,7 @@ import time
 import unittest
 
 import struct
-from hv_networks.J1708Driver import checksum
+from hv_networks.J1708Driver import checksum, J1708Driver
 from hv_networks.J1587Driver import J1587Driver
 from hv_networks.J1587Driver import J1708DriverFactory
 from hv_networks.J1587Driver import set_j1708_driver_factory
@@ -16,6 +16,7 @@ from hv_networks.J1587Driver import TimeoutException
 class FakeJ1708Driver:
     def __init__(self):
         self.to_rx = multiprocessing.Queue()
+        self.to_respond = list()
         self.sent = multiprocessing.Queue()
         self.stopped = threading.Event()
         return
@@ -24,22 +25,31 @@ class FakeJ1708Driver:
         for thing in more_rx:
             self.to_rx.put(thing)
 
+    def add_response(self, sent_trigger, response):
+        self.to_respond.append((sent_trigger, response))
+
     def read_message(self, checksum=False, timeout=0.5):
         if self.stopped.is_set():
             return None
         if self.to_rx.empty():
             return None
         else:
-            message = self.to_rx.get()
-            if checksum:  # NB: J1587Drive will always call with checksums=true
-                return message
+            message = self.get_next_to_rx()
+            if checksum:  # NB: J1587Driver will always call with checksums=true
+                return J1708Driver.prepare_message(message, has_checksum=False)
             else:
-                return message[:-1]
+                return message
+
+    def get_next_to_rx(self):
+        return self.to_rx.get()
 
     def send_message(self, buf, has_check=False):
         if self.stopped.is_set():
             return
         msg = buf
+        if len(self.to_respond) > 0 and msg == self.to_respond[0][0]:
+            self.add_to_rx([self.to_respond[0][1]])
+            self.to_respond = self.to_respond[1:]
         self.sent.put(msg)
 
     def close(self):
@@ -61,9 +71,12 @@ class FakeJ1708Factory(J1708DriverFactory):
     def make(self):
         with self.a_lock:
             if self.memo_fake_driver is None:
-                self.memo_fake_driver = FakeJ1708Driver()
+                self.memo_fake_driver = self.new_j1708_driver()
             a = self.memo_fake_driver
         return a
+
+    def new_j1708_driver(self):
+        return FakeJ1708Driver()
 
     def clear(self):
         with self.a_lock:
@@ -98,6 +111,21 @@ class J1587TestClass(unittest.TestCase):
         self.j1587_driver.send_message(b'\xff\x00')
         self.assertEqual(b'\xff\x00', self.j1708_driver.sent.get(block=True, timeout=1.0))
 
+    def test_one_send_trigger_response(self):
+        self.assertTrue(self.j1708_driver.sent.empty())
+        self.j1587_driver = J1587Driver(0xac)
+        self.j1708_driver.add_response(b'\xff\x00', b'\x01\x01')
+        self.j1587_driver.send_message(b'\xff\x00')
+        self.assertEqual(b'\xff\x00', self.j1708_driver.sent.get(block=True, timeout=1.0))
+        self.assertEqual(b'\x01\x01', self.j1587_driver.read_message(block=True, timeout=1.0))
+
+    def test_one_send_with_loopback(self):
+        self.assertTrue(self.j1708_driver.sent.empty())
+        self.j1587_driver = J1587Driver(0xac, loopback=True)
+        self.j1587_driver.send_message(b'\xff\x00')
+        self.assertEqual(b'\xff\x00', self.j1708_driver.sent.get(block=True, timeout=1.0))
+        self.assertEqual(b'\xff\x00', self.j1587_driver.read_message(block=True, timeout=1.0))
+
     def test_one_receive(self):
         self.j1708_driver.add_to_rx([b'\x80\x00'])
         self.j1587_driver = J1587Driver(0xac)
@@ -113,7 +141,7 @@ class J1587TestClass(unittest.TestCase):
 
         self.assertTrue(self.j1708_driver.sent.empty())
         self.j1587_driver = J1587Driver(0xac)
-        rx = self.j1587_driver.read_message(block=True)
+        rx = self.j1587_driver.read_message(block=True, timeout=7.0)
         self.assertEqual(dummy, rx)
         # confirm that the driver sends a CTS in response to the RTS
         self.assertEqual(b'\xac\xc5\x04\x80\x02\x01\x01', self.j1708_driver.sent.get(block=True, timeout=1.0))
@@ -126,7 +154,7 @@ class J1587TestClass(unittest.TestCase):
 
         self.assertTrue(self.j1708_driver.sent.empty())
         self.j1587_driver = J1587Driver(0xb6)
-        rx = self.j1587_driver.read_message(block=True)
+        rx = self.j1587_driver.read_message(block=True, timeout=7.0)
         self.assertEqual(dummy, rx)
         # confirm that the driver does not send a CTS in response to the RTS
         self.assertRaises(queue.Empty,
@@ -170,7 +198,7 @@ class J1587TestClass(unittest.TestCase):
         self.j1708_driver.add_to_rx([b'\xac\xc5\x05\x80\x01\x01\x0c\x00'])
         self.j1708_driver.add_to_rx([b'\xac\xc6\x0e\x80\x01\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48'])
         self.j1587_driver = J1587Driver(0x80)
-        rx = self.j1587_driver.read_message(block=True)
+        rx = self.j1587_driver.read_message(block=True, timeout=7.0)
         self.assertEqual(b'\xac\x00\xc8\x07\x04\x06\x00\x46\x41\x41\x5a\x05\x48', rx)
 
     def test_receive_dont_reassemble_one_for_others(self):
@@ -233,6 +261,22 @@ class J1587TestClass(unittest.TestCase):
                                 ]), rx)
         self.assertRaises(queue.Empty,
                           self.j1587_driver.read_message, block=True, timeout=1.0)
+
+    def test_j1587_send_no_dropping(self):
+        self.j1587_driver = J1587Driver(0xac, silent=True)
+
+        count = 2048
+        for i in range(count):
+            self.j1587_driver.send_message(b'\x01\x02\x03\x04')
+
+        now = time.monotonic()
+        sent = list()
+        while len(sent) < count:
+            if time.monotonic() - now > 1.5 * count / 100.0:
+                break
+            sent.append(self.j1708_driver.sent.get())
+        self.assertEqual(count, len(sent))
+
 
 if __name__ == "__main__":
     unittest.main()

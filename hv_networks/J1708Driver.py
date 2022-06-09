@@ -70,11 +70,16 @@ class J1708Driver():
         buf: A byte string that forms a J1708 message.
         has_check: boolean that indicates whether your message has a checksum or not. If False, checksum will be calculated and appended.
         '''
+        msg = self.prepare_message(buf, has_checksum)
+        self.sock.sendto(msg, ('localhost', self.serveport))
+
+    @staticmethod
+    def prepare_message(buf, has_checksum):
         msg = buf
-        if not has_check:
-            check = struct.pack('b',checksum(msg))
+        if not has_checksum:
+            check = struct.pack('b', checksum(msg))
             msg += check
-        self.sock.sendto(msg,('localhost',self.serveport))
+        return msg
 
     def close(self):
         self.sock.close()
