@@ -382,6 +382,10 @@ class J1708DriverFactory:
                 self.dll_name = RP1210.getAPINames()[0]
             if args.rp1210_device:
                 self.device_id = args.rp1210_device
+                client = RP1210.RP1210Client()
+                if self.device_id not in client.getCurrentVendor().getProtocol("J1708").getDevices():
+                    sys.stderr.write("device %d does not support j1708\n")
+                    sys.exit(1)
             if args.list_rp1210:
                 for dll_name in RP1210.getAPINames():
                     sys.stderr.write(f"DLL: {dll_name}\n")
@@ -398,8 +402,7 @@ class J1708DriverFactory:
         if self.rp1210:
             client = RP1210.RP1210Client()
             client.setVendor(self.dll_name)
-            device_id = client.getCurrentVendor().getProtocol("J1708").getDevices()[self.device_id - 1]
-            client.setDevice(device_id)
+            client.setDevice(self.device_id)
             client.connect(b"J1708:Baud=9600")
             return J1708Driver.RP1210J1708Driver(client)
         else:
