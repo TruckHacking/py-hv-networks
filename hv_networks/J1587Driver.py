@@ -14,12 +14,15 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>
 import enum
+import os
+import sys
 from types import SimpleNamespace
 
+if os.name == 'nt':
+    from RP1210 import RP1210
+
 from hv_networks import J1708Driver
-import struct
 import threading
-import select
 import queue
 import time
 import multiprocessing
@@ -314,10 +317,18 @@ class J1587SendSession(threading.Thread):
         super(J1587SendSession,self).join(timeout=timeout)
 
 
+DEFAULT_J1708_INTERFACE = 'j1708'
+if os.name == 'nt':
+    DEFAULT_J1708_INTERFACE = 'RP1210'
+
 class J1708DriverFactory:
     def __init__(self):
+        self.device_id = None
+        self.dll_name = None
         self.ports = None
+        self.truckduck_address = 'localhost'
         self.set_ecm_ports()
+        self.rp1210 = False
 
     def set_ports(self, ports):
         self.ports = ports
@@ -331,8 +342,71 @@ class J1708DriverFactory:
     def set_plc_ports(self):
         self.set_ports(J1708Driver.DPA)
 
+    @staticmethod
+    def argparse(parser):
+        parser.add_argument('--j1708-interface', default=DEFAULT_J1708_INTERFACE, const=DEFAULT_J1708_INTERFACE,
+                            nargs='?', choices=['truckduck_1', 'j1708', 'truckduck_2', 'j1708_2', 'truckduck_bbplc',
+                                                'plc', 'RP1210', 'rp1210'],
+                            help='choose the interface to send and receive J1708 messages. Truckduck interfaces use '
+                                 'localhost by default. RP1210 J1708 interface is available on 32bit python running '
+                                 'on windows when VDA drivers are installed and configured.')
+        parser.add_argument('--truckduck-host', default='localhost', nargs='?',
+                            help='specify the network hostname of the target truckduck. For non-localhost you will '
+                                 'need to start port redirects on the target host.')
+        parser.add_argument('--rp1210-dll', nargs='?', help='the RP1210 dll name to use. uses first DLL if omitted.')
+        parser.add_argument('--rp1210-device', nargs='?', help='the RP1210 device id to use. Default is 1.',
+                            default=1, type=int)
+        parser.add_argument('--list-rp1210', help='list the RP1210 DLLs and Devices.', action='store_true')
+
+    def parse_args(self, args):
+        if args.j1708_interface in ['truckduck_1', 'j1708']:
+            self.set_ecm_ports()
+        elif args.j1708_interface in ['truckduck_2', 'j1708_2']:
+            self.set_dpa_ports()
+        elif args.j1708_interface in ['truckduck_bbplc', 'plc']:
+            self.set_dpa_ports()
+        elif args.j1708_interface in ['RP1210', 'rp1210']:
+            if not os.name == 'nt':
+                sys.stderr.write('RP1210 only supported in 32bit python on windows\n')
+                sys.exit(1)
+            self.rp1210 = True
+
+        if args.truckduck_host:
+            # TODO print a one-liner to run the needed redirects on the truckduck
+            self.truckduck_address = args.truckduck_host
+
+        if os.name == 'nt':
+            if args.rp1210_dll:
+                self.dll_name = args.rp1210_dll
+            else:
+                self.dll_name = RP1210.getAPINames()[0]
+            if args.rp1210_device:
+                self.device_id = args.rp1210_device
+                client = RP1210.RP1210Client()
+                if self.device_id not in client.getCurrentVendor().getProtocol("J1708").getDevices():
+                    sys.stderr.write("device %d does not support j1708\n")
+                    sys.exit(1)
+            if args.list_rp1210:
+                for dll_name in RP1210.getAPINames():
+                    sys.stderr.write(f"DLL: {dll_name}\n")
+                    config = RP1210.RP1210Config(dll_name)
+                    for device in config.getDevices():
+                        sys.stderr.write(f"Device ID: {device.getID()}\n")
+                        sys.stderr.write(f"Device Description: {device.getDescription()}\n")
+                        sys.stderr.write(f"Device Name: {device.getName()}\n")
+                        sys.stderr.write(f"Device Params: {device.getParams()}\n")
+                sys.stderr.flush()
+                sys.exit(1)
+
     def make(self):
-        return J1708Driver.J1708Driver(self.ports)
+        if self.rp1210:
+            client = RP1210.RP1210Client()
+            client.setVendor(self.dll_name)
+            client.setDevice(self.device_id)
+            client.connect(b"J1708:Baud=9600")
+            return J1708Driver.RP1210J1708Driver(client)
+        else:
+            return J1708Driver.J1708Driver(ports=self.ports, host=self.truckduck_address)
 
 
 factory_lock = threading.Lock()

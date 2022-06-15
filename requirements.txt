@@ -1,1 +1,7 @@
-setuptools~=20.10.1
+setuptools~=58.1.0
+jsbeautifier~=1.14.3
+PyYAML~=6.0
+tqdm~=4.62.3
+git+https://github.com/dfieschko/RP1210
+bitstring~=3.1.9
+scapy~=2.4.5
