@@ -395,6 +395,7 @@ class J1708DriverFactory:
                         sys.stderr.write(f"Device Description: {device.getDescription()}\n")
                         sys.stderr.write(f"Device Name: {device.getName()}\n")
                         sys.stderr.write(f"Device Params: {device.getParams()}\n")
+                    sys.stderr.write(f"Protocols: {config.getProtocolNames()}\n\n")
                 sys.stderr.flush()
                 sys.exit(1)
 
@@ -403,7 +404,12 @@ class J1708DriverFactory:
             client = RP1210.RP1210Client()
             client.setVendor(self.dll_name)
             client.setDevice(self.device_id)
-            client.connect(b"J1708:Baud=9600")
+
+            config = RP1210.RP1210Config(self.dll_name)
+            protocol = b"J1708"
+            if protocol not in config.getProtocolNames():
+                protocol = b"PLC"
+            client.connect(protocol + b":Baud=9600")
             return J1708Driver.RP1210J1708Driver(client)
         else:
             return J1708Driver.J1708Driver(ports=self.ports, host=self.truckduck_address)
