@@ -376,16 +376,6 @@ class J1708DriverFactory:
             self.truckduck_address = args.truckduck_host
 
         if os.name == 'nt':
-            if args.rp1210_dll:
-                self.dll_name = args.rp1210_dll
-            else:
-                self.dll_name = RP1210.getAPINames()[0]
-            if args.rp1210_device:
-                self.device_id = args.rp1210_device
-                client = RP1210.RP1210Client()
-                if self.device_id not in client.getCurrentVendor().getProtocol("J1708").getDevices():
-                    sys.stderr.write("device %d does not support j1708\n")
-                    sys.exit(1)
             if args.list_rp1210:
                 for dll_name in RP1210.getAPINames():
                     sys.stderr.write(f"DLL: {dll_name}\n")
@@ -398,6 +388,23 @@ class J1708DriverFactory:
                     sys.stderr.write(f"Protocols: {config.getProtocolNames()}\n\n")
                 sys.stderr.flush()
                 sys.exit(1)
+
+            if args.rp1210_dll:
+                self.dll_name = args.rp1210_dll
+            else:
+                self.dll_name = RP1210.getAPINames()[0]
+
+            if args.rp1210_device:
+                self.device_id = args.rp1210_device
+                client = RP1210.RP1210Client()
+                client.setVendor(self.dll_name)
+                client.setDevice(self.device_id)
+
+                config = RP1210.RP1210Config(self.dll_name)
+                protocols = config.getProtocolNames()
+                if 'J1708' not in protocols and 'PLC' not in protocols:
+                    sys.stderr.write("device %d does not support j1708 %s\n" % (self.device_id, protocols))
+                    sys.exit(1)
 
     def make(self):
         if self.rp1210:
