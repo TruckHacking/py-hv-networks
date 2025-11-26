@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hv-networks"
-version = "0.2"
+version = "0.3.dev0"
 description = "Easy-ish Python interfaces to TruckDuck network interfaces"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -32,4 +32,5 @@ Homepage = "https://github.com/TruckHacking/py-hv-networks"
 Issues = "https://github.com/TruckHacking/py-hv-networks/issues"
 
 [tool.setuptools.packages.find]
+
 where = ["."]
