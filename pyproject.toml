@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hv-networks"
+version = "0.2"
+description = "Easy-ish Python interfaces to TruckDuck network interfaces"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "GPL"}
+authors = [
+  {name = "Haystack", email = "haystackinfosec@gmail.com"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+dependencies = [
+    "jsbeautifier~=1.14.3",
+    "PyYAML~=6.0",
+    "tqdm~=4.62.3",
+    "RP1210>=1.0.0",
+    "bitstring~=3.1.9",
+    "scapy~=2.4.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/TruckHacking/py-hv-networks"
+Issues = "https://github.com/TruckHacking/py-hv-networks/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
